@@ -1,5 +1,6 @@
-INTERMEDIATE CSV FORMAT (MVP)
+INTERMEDIATE CSV FORMAT
 ================================
+NOTE: I asked ChatGPT to summarize my messy notes, this is written by AI.
 
 Scope
 -----
