@@ -11,7 +11,7 @@ This file concerns itself with the multidimensional PeMs datasets, those that ha
 URL="https://zenodo.org/api/records/7816008/files-archive"
 ZIP_DEFAULT_PATH = Path("./../temp/data.zip")
 OUT_DEFAULT_PATH = Path("./../temp/pems_volume")
-default_set=[]
+DEFAULT_SET=["04", "08"]
 
 def _download(zip_path = ZIP_DEFAULT_PATH, out_dir = OUT_DEFAULT_PATH):
     #Download:
@@ -94,7 +94,7 @@ def _individual_prepare(out_dir, dataset):
     cleaned = dest / "edges.csv"
     cleaned.write_text("\n".join(ln for ln in src.read_text().splitlines() if ln.strip()))    
 
-def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH, dataset_select: list =["04", "08"]):
+def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH, dataset_select: list =DEFAULT_SET):
     if download:
         print("Starting Download, this might take a while..")
         _download(out_dir=out_path)

@@ -23,7 +23,9 @@ def series_csv_to_h5(series_csv: str, h5_path: str, value_col: str | None = FIRS
         Name of the value column to pivot. If None, use all columns except 'ts' and 'node_id'.
     """
     df = pd.read_csv(series_csv, parse_dates=["ts"])
-    
+    df.rename(columns={df.columns[0]: "ts", df.columns[1]: "node_id"}, inplace=True)
+
+
     if value_col is None:
         # Select all numeric/value columns except the identifiers
         value_cols = [c for c in df.columns if c not in ("ts", "node_id")]
@@ -40,6 +42,9 @@ def series_csv_to_h5(series_csv: str, h5_path: str, value_col: str | None = FIRS
 def edges_csv_to_adj(edges_csv: str, pkl_path: str):
     """Create adj_mx.pkl from edges.csv."""
     edges = pd.read_csv(edges_csv)
+    #Ensures our columns have the correct names
+    edges.rename(columns={edges.columns[0]: "src", edges.columns[1]: "dst", **({edges.columns[2]: "weight"} if edges.shape[1] >= 3 else {})}, inplace=True)
+
     node_ids = sorted(pd.unique(edges[["src", "dst"]].to_numpy().ravel()))
     id2ind = {nid: i for i, nid in enumerate(node_ids)}
     adj = np.zeros((len(node_ids), len(node_ids)), dtype=float)
@@ -73,6 +78,9 @@ def write_sensor_ids(edges_csv: str, output_txt: str):
     # Collect all src/dst IDs
     with open(edges_csv, newline="") as f:
         reader = csv.DictReader(f)
+        #Ensure the names are correct
+        reader.fieldnames = ["src", "dst"] + reader.fieldnames[2:]
+        
         for row in reader:
             sensor_ids.add(row["src"])
             sensor_ids.add(row["dst"])
@@ -94,6 +102,8 @@ def series_csv_to_npz(series_csv, npz_path, feature_cols: list[str] | None = Non
     """
     # Load CSV
     df = pd.read_csv(series_csv, parse_dates=["ts"])
+    df.rename(columns={df.columns[0]: "ts", df.columns[1]: "node_id"}, inplace=True)
+
 
     # Pick features: all columns except ts/node_id if not provided
     if feature_cols is None:

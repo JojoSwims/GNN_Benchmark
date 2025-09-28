@@ -38,6 +38,8 @@ def series_csv_to_txt(series_csv: str, txt_path: str, value_col: str = util.FIRS
         cols = nodes ordered by `node_id` (ascending)
     """
     df = pd.read_csv(series_csv, parse_dates=["ts"])
+    df.rename(columns={df.columns[0]: "ts", df.columns[1]: "node_id"}, inplace=True)
+
     table = (
         df.pivot(index="ts", columns="node_id", values=value_col)
           .sort_index()
