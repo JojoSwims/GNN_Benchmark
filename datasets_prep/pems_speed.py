@@ -98,7 +98,7 @@ def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH, dataset_sele
         (out_path/ds).mkdir(parents=True, exist_ok=True)
         df=_individual_prepare_data(out_path, ds)
         df.to_csv(out_path/ds/"series.csv", index=False)
-        _individual_prepare_adj(out_path, ds)
+        df=_individual_prepare_adj(out_path, ds)
         df.to_csv(out_path/ds/"edges.csv", index=False)
 
     if cleanup:
