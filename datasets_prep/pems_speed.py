@@ -18,11 +18,11 @@ def _download(dataset_select, zip_path = ZIP_DEFAULT_PATH, out_dir = OUT_DEFAULT
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if "pemsbay" in dataset_select:
-        #gdown.download(id=BAY_ID, output=str(out_dir/"pems-bay.h5"), quiet=False)
+        gdown.download(id=BAY_ID, output=str(out_dir/"pems-bay.h5"), quiet=False)
         urllib.request.urlretrieve(BAY_URL, out_dir/"adj_mx_bay.pkl")
 
     if "metrla" in dataset_select:
-        #gdown.download(id=METRLA_ID, output=str(out_dir/"metr-la.h5"), quiet=False)
+        gdown.download(id=METRLA_ID, output=str(out_dir/"metr-la.h5"), quiet=False)
         urllib.request.urlretrieve(METRLA_URL, out_dir/"adj_mx.pkl")
 
 

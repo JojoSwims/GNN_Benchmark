@@ -5,12 +5,10 @@ import pickle
 import csv
 from pathlib import Path
 
-
-
-
 FIRST_COLUMN_NAME="value1"
 
-def series_csv_to_h5(series_csv: str, h5_path: str, value_col: str | None = FIRST_COLUMN_NAME):
+
+def series_csv_to_h5(series_csv: str, h5_path: str):
     """Convert series.csv into the HDF5 format expected by generate_training_data.py.
     
     Parameters
@@ -26,12 +24,8 @@ def series_csv_to_h5(series_csv: str, h5_path: str, value_col: str | None = FIRS
     df.rename(columns={df.columns[0]: "ts", df.columns[1]: "node_id"}, inplace=True)
 
 
-    if value_col is None:
-        # Select all numeric/value columns except the identifiers
-        value_cols = [c for c in df.columns if c not in ("ts", "node_id")]
-        table = df.pivot(index="ts", columns="node_id", values=value_cols)
-    else:
-        table = df.pivot(index="ts", columns="node_id", values=value_col)
+    value_cols = [c for c in df.columns if c not in ("ts", "node_id")]
+    table = df.pivot(index="ts", columns="node_id", values=value_cols)
     
     table.to_hdf(h5_path, key="df")
 
@@ -80,7 +74,7 @@ def write_sensor_ids(edges_csv: str, output_txt: str):
         reader = csv.DictReader(f)
         #Ensure the names are correct
         reader.fieldnames = ["src", "dst"] + reader.fieldnames[2:]
-        
+
         for row in reader:
             sensor_ids.add(row["src"])
             sensor_ids.add(row["dst"])
