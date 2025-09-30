@@ -6,6 +6,11 @@ import pickle
 import shutil
 import urllib.request
 
+"""
+Important note on the adjacency matrix. For some reason, the adjacency matrices provided are not 
+truly symetric. 
+"""
+
 BAY_ID="1wD-mHlqAb2mtHOe_68fZvDh1LpDegMMq"
 METRLA_ID="1pAGRfzMx6K9WWsfDcD1NMbIif0T0saFC"
 BAY_URL="https://raw.githubusercontent.com/chnsh/DCRNN/master/data/sensor_graph/adj_mx_bay.pkl"
@@ -83,8 +88,8 @@ def _individual_prepare_adj(out_dir, dataset):
         obj = pickle.load(f, encoding="latin1")    # file object, not a string
     ids, id_to_ind, adj = obj[0], obj[1], np.asarray(obj[2])
     i, j = np.nonzero(adj); m = i != j
-    edges = pd.DataFrame({"to":[ids[b] for b in j[m]],
-                        "from":[ids[a] for a in i[m]],
+    edges = pd.DataFrame({"from":[ids[a] for a in i[m]],
+                          "to":[ids[b] for b in j[m]],
                         "cost":adj[i[m], j[m]].astype(float)})
     return edges
 
