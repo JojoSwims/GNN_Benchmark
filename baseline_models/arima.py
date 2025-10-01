@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
-import warnings
-from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.arima.model import SARIMAX
 import util
 
 """
@@ -52,7 +51,7 @@ def get_mask(df, verbose: bool=True):
 
 
 
-def arima_forecast(df, order=(3,0,1), train_ratio=0.8):
+def arima_forecast(df, order=(3,0,1), seasonal_order=(1,0,0,12), train_ratio=0.8):
     """
     Runs arima (fits and then predicts) on a single time-series. 
     Returns a dict that has the resulting prediction with h as key values and the y_test with key value 0.
@@ -61,7 +60,7 @@ def arima_forecast(df, order=(3,0,1), train_ratio=0.8):
     HORIZONS=(3,6,12)
     y=df.iloc[:, 0] #Ensure we have a series 
     y_train, _, y_test=util.time_splits(y, train_frac=train_ratio, val_frac=0)
-    res=ARIMA(y_train, order=order).fit()
+    res=res = SARIMAX(y_train, order=order, seasonal_order=seasonal_order).fit()
 
 
     #Now, fill in a list of predictions for each h
@@ -86,7 +85,18 @@ def arima_forecast(df, order=(3,0,1), train_ratio=0.8):
 
 
 if __name__=="__main__":
-    # Given
+    
+    #New workflow start
+    path="../temp/aqi"
+    
+
+    df=util.wide2long(path)
+    #Run SARIMA on that DF and compute the error statistics with the functions in baseline_models.util
+    
+    
+
+    #----------PREVIOUS WORKFLOW------------------
+
     df_baseline = util.load_csv("./pemsbay/pemsbay.csv").replace(0.0, np.nan)
     df_test     = util.load_csv("pemsh12.csv")
 

@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-
+from statsmodels.tsa.statespace.structural import UnobservedComponents
 
 
 
@@ -10,6 +10,72 @@ import numpy as np
 
 #----------Functions acting on series.csv---------------
 
+#TODO: Test this
+def split_series(path, option="frames"):
+    #Splits our series by channel
+    df=pd.read_csv(path+"/series.csv")
+    ts_col, node_col = df.columns[:2]
+    out=[]
+    for c in df.columns[2:]:
+        tmp = df[[ts_col, node_col, c]].copy()
+        tmp.columns = [ts_col, node_col, "value"]
+        # one timestamp column, then node_id columns
+        wide = tmp.pivot(index=ts_col, columns=node_col, values="value").reset_index()
+        out.append(wide)
+    return out
+
+#Untested function, please fix.
+def kalman_impute(df: pd.DataFrame, minutes_in_step: int = 5, train_ratio: float = 0.8):
+    """
+    Impute NaNs column-wise using a UnobservedComponents (local level + deterministic daily/weekly seasonality).
+    Fits parameters on the first `train_ratio` fraction (train) and applies to the rest (test) without refitting.
+    Returns (imputed_df, missing_mask).
+    """
+    # periods from sampling step
+    daily  = max(2, int(round(1440 / minutes_in_step)))
+    weekly = max(2, daily * 7)
+
+    freq_seasonal = [
+        {"period": daily,  "harmonics": 5},  # daily cycle
+        {"period": weekly, "harmonics": 1},  # weekly cycle
+    ]
+    stochastic_freq_seasonal = [False, False]
+
+    n_train = int(round(len(df) * train_ratio))
+    idx_tr  = df.index[:n_train]
+    idx_te  = df.index[n_train:]
+
+    imputed = df.copy()
+    mask    = df.isna()
+
+    for i in range(df.shape[1]):
+        y_tr = pd.to_numeric(df.iloc[:n_train, i], errors="coerce")
+        y_te = pd.to_numeric(df.iloc[n_train:, i], errors="coerce")
+
+        # if train has no finite values, skip this column
+        if not np.isfinite(y_tr).any():
+            continue
+
+        model = UnobservedComponents(
+            endog=y_tr,
+            level="llevel",
+            freq_seasonal=freq_seasonal,
+            stochastic_freq_seasonal=stochastic_freq_seasonal
+        )
+        res = model.fit(disp=False)
+
+        # in-sample predictions for train, condition on observed points
+        pred_tr = res.predict(start=idx_tr[0], end=idx_tr[-1], dynamic=False)
+        imputed.iloc[:n_train, i] = y_tr.fillna(pred_tr)
+
+        # apply fixed parameters to test without refit; condition on observed test points
+        if len(idx_te) > 0:
+            appended = res.append(endog=y_te, refit=False)
+            pred_te = appended.predict(start=idx_te[0], end=idx_te[-1], dynamic=False)
+            imputed.iloc[n_train:, i] = y_te.fillna(pred_te)
+
+    return imputed, mask
+    
 def series2tensor(path):
     """Converts a file with our intermediate representation into a (T,C,N) tensor"""
     df=pd.read_csv(path+"/series.csv")
@@ -170,4 +236,3 @@ if __name__=="__main__":
         print(p)
         A=edges_to_np_array(p, p.removeprefix("../temp/"))
         print(is_symmetric(A))
-

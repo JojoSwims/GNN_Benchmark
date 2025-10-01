@@ -12,15 +12,14 @@ def persistence_fill(y: pd.Series) -> tuple[pd.Series, pd.Series]:
     y = y.copy()
     obs_mask = y.notna()
     y_ffill = y.ffill()  # leading NaNs stay NaN
-    
+
     return y_ffill, obs_mask
 
 
 
-def persistence_forecast(df, HORIZONS=(3, 6, 12), train_ratio=0.8):
+def persistence_forecast(df, horizons=(3, 6, 12), train_ratio=0.8):
     """
     Persistence baseline (naive): y_hat(t+h | info up to t-1) = y(t-1).
-    Mirrors the alignment in your ARIMA loop:
       - at test step i, you forecast first (using history up to t-1),
         then you append y_test[i] to the history for the next step.
       - therefore targets are aligned to y_test.index[h-1:].
@@ -31,13 +30,30 @@ def persistence_forecast(df, HORIZONS=(3, 6, 12), train_ratio=0.8):
         - predictions[0]: full y_test segment (for convenience)
     """
     y = df.iloc[:, 0].squeeze()                 # 1-D Series
-    y_train, _, y_test = util.time_splits(y, train_frac=train_ratio, val_frac=0)
 
-    #if y_train.zeroes to NaNs has any NaN values, throw an error:
+    if y.isna().any():
+        raise ValueError("persistence_forecast expects no missing values; run your fill step first.")
+    if not 0 < train_ratio < 1:
+        raise ValueError("train_ratio must be in (0, 1).")
+    
+    _, _, y_test = util.time_splits(y, train_frac=train_ratio, val_frac=0)
+
+    start_idx = y.index.get_loc(y_test.index[0])
+    predictions = {0: y_test.copy()}
+    for h in horizons:  # keep caller's order; no sorting/dedup
+        n_targets = len(y_test) - h + 1
+        n_targets = len(y_test) - h + 1
+
+        vals = [y.iloc[start_idx - 1 + i] for i in range(n_targets)]
+        idx = y_test.index[h - 1 : h - 1 + n_targets]
+        predictions[h] = pd.Series(vals, index=idx)
+    return predictions
 
 
 
 
 if __name__=="__main__":
     df=pd.DataFrame() #Placeholder value, empty dataframe.
-    df, mask=persistence_fill
+    df, mask=persistence_fill(df)
+    preds=persistence_forecast(df)
+    #Compute the error rates:
