@@ -57,7 +57,11 @@ def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH):
 
     #Dividing by 4 makes the value go from kW to kWh (described in the dataset description above)
     df=df/4.0
-    df = df.fillna(0)
+
+    # Replace zero measurements with NaN before reshaping the dataset
+    if not df.empty:
+        value_columns = df.columns.tolist()
+        df.loc[:, value_columns] = df.loc[:, value_columns].where(df.loc[:, value_columns] != 0)
 
     #Pivot the dataframe to our intermediate representation:
     df = (
@@ -67,14 +71,15 @@ def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH):
           .sort_values("timestamp", kind="mergesort")
           .reset_index(drop=True)
     )
+
     #Output our intermediate representation:
     df.to_csv(out_path/"series.csv", index=False)
 
     #Output our mask:
     id_cols   = df.columns[:2]
     feat_cols = df.columns[2]
-    zero_mask = df[id_cols].join(df[feat_cols] == 0.0)
-    zero_mask.to_csv(out_path/"mask.csv", index=False)
+    missing_mask = df[id_cols].join(df[feat_cols].isna())
+    missing_mask.to_csv(out_path/"mask.csv", index=False)
     
     if cleanup:
         try:

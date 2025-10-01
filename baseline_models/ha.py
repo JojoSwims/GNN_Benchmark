@@ -18,7 +18,6 @@ def historical_average_predict(df, period=12 * 24 * 7, test_ratio=0.2):
     """
     
     df = df.copy()
-    df = df.fillna(0)
 
     n_sample, n_sensor = df.shape
     n_test = int(round(n_sample * test_ratio))
@@ -29,7 +28,7 @@ def historical_average_predict(df, period=12 * 24 * 7, test_ratio=0.2):
     for i in range(n_train, min(n_sample, n_train + period)):
         inds = [j for j in range(i % period, n_train, period)]
         historical = df.iloc[inds, :]
-        y_predict.iloc[i - n_train, :] = historical[historical != 0.0].mean()
+        y_predict.iloc[i - n_train, :] = historical.mean(skipna=True)
     # Copy each period.
     for i in range(n_train + period, n_sample, period):
         size = min(period, n_sample - i)

@@ -161,7 +161,11 @@ def _convert_to_ir(in_path, out_path, node_ids, features=KEPT_FEATURES):
     df = df[df[ts_col] > pd.Timestamp("2014-01-01")] 
 
     feat_cols = [c for c in features if c in df.columns[2:]]
-    df = df[[ts_col, node_col, *feat_cols]]
+    df = df[[ts_col, node_col, *feat_cols]].copy()
+
+    # Treat zeros as missing values as soon as we have the feature columns
+    if feat_cols:
+        df.loc[:, feat_cols] = df.loc[:, feat_cols].where(df.loc[:, feat_cols] != 0)
 
     # Sort by timestamp, then node_id
     df = df.sort_values(by=[ts_col, node_col]).reset_index(drop=True)

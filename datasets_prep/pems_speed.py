@@ -75,6 +75,10 @@ def _individual_prepare_data(out_dir, dataset):
             .rename_axis(["ts", "node_id"])
             .reset_index(name="value")
     )
+    value_cols = long.columns[2:]
+    if len(value_cols):
+        long = long.copy()
+        long.loc[:, value_cols] = long.loc[:, value_cols].where(long.loc[:, value_cols] != 0)
     return long
 
 def _individual_prepare_adj(out_dir, dataset):
@@ -103,6 +107,7 @@ def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH, dataset_sele
         (out_path/ds).mkdir(parents=True, exist_ok=True)
         df=_individual_prepare_data(out_path, ds)
         df.to_csv(out_path/ds/"series.csv", index=False)
+
         df=_individual_prepare_adj(out_path, ds)
         df.to_csv(out_path/ds/"edges.csv", index=False)
 
