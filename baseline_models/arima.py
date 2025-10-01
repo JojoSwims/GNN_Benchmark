@@ -50,19 +50,7 @@ def get_mask(df, verbose: bool=True):
     
     return mask
 
-def time_splits(series_or_df, train_frac=0.7, val_frac=0.1):
-    """
-    Works for a single-column DataFrame or a Series.
-    Splits by time (no shuffling).
-    """
-    x = series_or_df
-    n = len(x)
-    i1 = int(n * train_frac)
-    i2 = int(n * (train_frac + val_frac))
-    train = x.iloc[:i1]
-    val   = x.iloc[i1:i2]
-    test  = x.iloc[i2:]
-    return train, val, test
+
 
 def arima_forecast(df, order=(3,0,1), train_ratio=0.8):
     """
@@ -72,7 +60,7 @@ def arima_forecast(df, order=(3,0,1), train_ratio=0.8):
     """
     HORIZONS=(3,6,12)
     y=df.iloc[:, 0] #Ensure we have a series 
-    y_train, y_val, y_test=time_splits(y, train_frac=train_ratio, val_frac=0)
+    y_train, _, y_test=util.time_splits(y, train_frac=train_ratio, val_frac=0)
     res=ARIMA(y_train, order=order).fit()
 
 

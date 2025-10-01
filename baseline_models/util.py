@@ -2,34 +2,37 @@ import numpy as np
 import pandas as pd
 import h5py
 
-
-def load_csv(path):
-    """Load a CSV file containing sensor readings indexed by timestamp.
-
-    Parameters
-    ----------
-    path : str or PathLike
-        Location of the CSV file. The file is expected to have an unnamed
-        timestamp column that will become the index.
-
-    Returns
-    -------
-    pandas.DataFrame
-        DataFrame of shape ``(T, N)`` where ``T`` is the number of time steps
-        and ``N`` the number of sensors. The index is parsed as timestamps and
-        all values are converted to ``float`` with missing entries filled with
-        ``0``.
+def time_splits(series_or_df, train_frac=0.7, val_frac=0.1):
     """
-    df = pd.read_csv(path, index_col=0, parse_dates=True)
+    Works for a single-column DataFrame or a Series.
+    Splits by time (no shuffling).
+    """
+    x = series_or_df
+    n = len(x)
+    i1 = int(n * train_frac)
+    i2 = int(n * (train_frac + val_frac))
+    train = x.iloc[:i1]
+    val   = x.iloc[i1:i2]
+    test  = x.iloc[i2:]
+    return train, val, test
 
-    # Convert everything to floats
-    df = df.astype(float)
-
-    # Ensure missing values are treated consistently with the zero null value.
-    df = df.copy()
+def wide2long(path):
+    df=pd.read_csv(path+"/series.csv")
     df = df.fillna(0)
+    #For each column c after and including the third column, make a dataframe composed of the first two columns and c
+    ts_col, node_col = df.columns[:2]
+    out=[]
+    for c in df.columns[2:]:
+        tmp = df[[ts_col, node_col, c]].copy()
+        tmp.columns = [ts_col, node_col, "value"]
+        # one timestamp column, then node_id columns
+        wide = tmp.pivot(index=ts_col, columns=node_col, values="value").reset_index()
+        out.append(wide)
+    return out
+    #Return the list of dataframes.
 
-    return df  # shape: (T, N) with DateTimeIndex(freq='5T')
+
+    
 
 
 def load_h5(path):
@@ -182,12 +185,4 @@ def mape(y_true, y_pred, mask=None, eps=1e-6):
     return _masked_mean(percentage_errors, validity_mask)
 
 if __name__=="__main__":
-
-    path = "./pemsbay/pemsbay.csv"
-
-    df = load_csv(path)
-    total_entries = df.size
-    zero_count = (df == 0).sum().sum()
-    zero_pct = zero_count / total_entries * 100
-
-    print(f"Total zeros: {zero_count} ({zero_pct:.2f}% of all values)")
+    pass
