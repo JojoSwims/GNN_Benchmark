@@ -75,6 +75,7 @@ def _individual_prepare(out_dir, dataset):
     # Creates on indexed dataframe for each of the three dimensions
     idx = pd.date_range(date, periods=arr.shape[0], freq="5min")
     dfs = [pd.DataFrame(x.squeeze(-1), index=idx) for x in np.split(arr, 3, axis=-1)]
+    dfs = [df.where(df != 0) for df in dfs]
     
     #Transform those dataframes into our long format.
     names = ['flow','occupancy','speed']
@@ -83,7 +84,7 @@ def _individual_prepare(out_dir, dataset):
     
     #Combine them into one dataframe:
     df= pd.concat([d.set_index('node', append=True) for d in longs], axis=1).rename_axis(['ts','node']).sort_index()
-    
+
     #Output it to our directory
     dest = out_dir / name
     dest.mkdir(parents=True, exist_ok=True) 

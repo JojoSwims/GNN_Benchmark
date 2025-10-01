@@ -18,7 +18,6 @@ def time_splits(series_or_df, train_frac=0.7, val_frac=0.1):
 
 def wide2long(path):
     df=pd.read_csv(path+"/series.csv")
-    df = df.fillna(0)
     #For each column c after and including the third column, make a dataframe composed of the first two columns and c
     ts_col, node_col = df.columns[:2]
     out=[]
@@ -55,7 +54,7 @@ def load_h5(path):
 def _resolve_mask(labels, mask=None):
     """Compute a validity mask for label arrays.
 
-    Missing targets are assumed to be encoded as ``0``. Any provided mask is
+    Missing targets are assumed to be encoded as ``NaN``. Any provided mask is
     broadcast to match ``labels`` and returned directly.
 
     Parameters
@@ -77,7 +76,8 @@ def _resolve_mask(labels, mask=None):
             mask = np.broadcast_to(mask, labels.shape)
         return mask
 
-    return np.asarray(labels) != 0
+    labels_arr = np.asarray(labels, dtype=float)
+    return ~np.isnan(labels_arr)
 
 
 def _masked_mean(values, mask):
@@ -116,9 +116,8 @@ def mae(y_true, y_pred, mask=None):
         Predicted values.
     mask : numpy.ndarray, optional
         Boolean array selecting entries to include in the computation. When not
-        provided, entries equal to ``0`` in ``y_true`` are treated as missing
-        data and ignored. Any NaNs in the inputs should already be replaced
-        with ``0`` when loading the data.
+        provided, entries with ``NaN`` in ``y_true`` are treated as missing data
+        and ignored.
 
     Returns
     -------
@@ -141,9 +140,8 @@ def rmse(y_true, y_pred, mask=None):
         Predicted values.
     mask : numpy.ndarray, optional
         Boolean array selecting entries to include in the computation. When not
-        provided, entries equal to ``0`` in ``y_true`` are treated as missing
-        data and ignored. Any NaNs in the inputs should already be replaced
-        with ``0`` when loading the data.
+        provided, entries with ``NaN`` in ``y_true`` are treated as missing data
+        and ignored.
 
     Returns
     -------
@@ -167,9 +165,8 @@ def mape(y_true, y_pred, mask=None, eps=1e-6):
         Predicted values.
     mask : numpy.ndarray, optional
         Boolean array selecting entries to include in the computation. When not
-        provided, entries equal to ``0`` in ``y_true`` are treated as missing
-        data and ignored. Any NaNs in the inputs should already be replaced
-        with ``0`` when loading the data.
+        provided, entries with ``NaN`` in ``y_true`` are treated as missing data
+        and ignored.
     eps : float, optional
         Small constant added to the denominator to avoid division by zero.
 
