@@ -1,8 +1,60 @@
 import pandas as pd
-from statsmodels.tsa.arima.model import SARIMAX
+from statsmodels.tsa.arima.model import SARIMAX, UnobservedComponents
+import numpy as np
 
 import util
 
+
+def kalman_impute(df: pd.DataFrame, minutes_in_step: int = 5, train_ratio: float = 0.8):
+    """
+    Impute NaNs column-wise using a UnobservedComponents (local level + deterministic daily/weekly seasonality).
+    Fits parameters on the first `train_ratio` fraction (train) and applies to the rest (test) without refitting.
+    Returns (imputed_df, missing_mask).
+    """
+    # periods from sampling step
+    daily  = max(2, int(round(1440 / minutes_in_step)))
+    weekly = max(2, daily * 7)
+
+    freq_seasonal = [
+        {"period": daily,  "harmonics": 5},  # daily cycle
+        {"period": weekly, "harmonics": 1},  # weekly cycle
+    ]
+    stochastic_freq_seasonal = [False, False]
+
+    n_train = int(round(len(df) * train_ratio))
+    idx_tr  = df.index[:n_train]
+    idx_te  = df.index[n_train:]
+
+    imputed = df.copy()
+    mask    = df.isna()
+
+    for i in range(df.shape[1]):
+        y_tr = pd.to_numeric(df.iloc[:n_train, i], errors="coerce")
+        y_te = pd.to_numeric(df.iloc[n_train:, i], errors="coerce")
+
+        # if train has no finite values, skip this column
+        if not np.isfinite(y_tr).any():
+            continue
+
+        model = UnobservedComponents(
+            endog=y_tr,
+            level="llevel",
+            freq_seasonal=freq_seasonal,
+            stochastic_freq_seasonal=stochastic_freq_seasonal
+        )
+        res = model.fit(disp=False)
+
+        # in-sample predictions for train, condition on observed points
+        pred_tr = res.predict(start=idx_tr[0], end=idx_tr[-1], dynamic=False)
+        imputed.iloc[:n_train, i] = y_tr.fillna(pred_tr)
+
+        # apply fixed parameters to test without refit; condition on observed test points
+        if len(idx_te) > 0:
+            appended = res.append(endog=y_te, refit=False)
+            pred_te = appended.predict(start=idx_te[0], end=idx_te[-1], dynamic=False)
+            imputed.iloc[n_train:, i] = y_te.fillna(pred_te)
+
+    return imputed, mask
 
 def split_into_sensor_frames(df):
     """
@@ -14,11 +66,9 @@ def split_into_sensor_frames(df):
         sensor_frames[col] = pd.DataFrame(df[col]).copy()
     return sensor_frames
 
-def arima_forecast(df, order=(3, 0, 1), seasonal_order=(1, 0, 0, 12), train_ratio=0.8):
+def sarima_forecast(df, order=(3, 0, 1), seasonal_order=(1, 0, 0, 12), train_ratio=0.8):
     """
-    Runs arima (fits and then predicts) on a single time-series. 
-    Returns a dict that has the resulting prediction with h as key values and the y_test with key value 0.
-    NOTE: We will be missing the first h-1 observations, which we will 
+
     """
     horizons = (3, 6, 12)
     y = df.iloc[:, 0]
@@ -68,7 +118,7 @@ def compute_metrics(prediction_df):
 def evaluate_sensor(sensor_df, order, seasonal_order, train_ratio):
     """Run ARIMA for all horizons on a single sensor frame and compute metrics."""
 
-    predictions = arima_forecast(
+    predictions = sarima_forecast(
         sensor_df, order=order, seasonal_order=seasonal_order, train_ratio=train_ratio
     )
 

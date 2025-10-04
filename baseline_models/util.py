@@ -20,12 +20,22 @@ def wide2long(path):
     df=pd.read_csv(path+"/series.csv")
     #For each column c after and including the third column, make a dataframe composed of the first two columns and c
     ts_col, node_col = df.columns[:2]
+    df[ts_col] = pd.to_datetime(df[ts_col])
     out=[]
     for c in df.columns[2:]:
         tmp = df[[ts_col, node_col, c]].copy()
         tmp.columns = [ts_col, node_col, "value"]
+        if tmp.duplicated([ts_col, node_col]).any():
+            raise ValueError("Duplicate (timestamp, node_id) pairs detected.")
         # one timestamp column, then node_id columns
-        wide = tmp.pivot(index=ts_col, columns=node_col, values="value").reset_index()
+        wide = tmp.pivot(index=ts_col, columns=node_col, values="value")
+
+        idx = wide.index.sort_values()
+        freq = pd.infer_freq(idx) or idx.to_series().diff().dropna().mode().iloc[0]
+
+        wide = (wide.reindex(pd.date_range(idx.min(), idx.max(), freq=freq))
+           .reset_index()
+           .rename(columns={"index": ts_col}))
         out.append(wide)
     return out
     #Return the list of dataframes.

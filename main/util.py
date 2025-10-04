@@ -24,7 +24,7 @@ def split_series(path, option="frames"):
         out.append(wide)
     return out
 
-#Untested function, please fix.
+
 def kalman_impute(df: pd.DataFrame, minutes_in_step: int = 5, train_ratio: float = 0.8):
     """
     Impute NaNs column-wise using a UnobservedComponents (local level + deterministic daily/weekly seasonality).

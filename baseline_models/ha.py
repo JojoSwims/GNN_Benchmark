@@ -16,8 +16,16 @@ def historical_average_predict(df, period=12 * 24 * 7, test_ratio=0.2):
     :param null_val: default 0.
     :return: y_predict, y_test
     """
+
+
+    #Ensures we have no problems regarding misaligned timestamps or missing timestamps
+    u = pd.DatetimeIndex(pd.to_datetime(df.iloc[:, 0])).unique().sort_values()
+    f = pd.infer_freq(u) or u.to_series().diff().mode().iloc[0]
+    assert u.equals(pd.date_range(u[0], u[-1], freq=f))
+
     
     df = df.copy()
+    df = df.set_index(df.columns[0])
 
     n_sample, n_sensor = df.shape
     n_test = int(round(n_sample * test_ratio))
@@ -38,36 +46,40 @@ def historical_average_predict(df, period=12 * 24 * 7, test_ratio=0.2):
 
 
 
-def eval_historical_average(traffic_reading_df):
-    y_predict, y_test = historical_average_predict(traffic_reading_df, test_ratio=0.2)
-    rmse = util.rmse(preds=y_predict.to_numpy(), labels=y_test.to_numpy())
-    mape = util.mape(preds=y_predict.to_numpy(), labels=y_test.to_numpy())
-    mae = util.masked_mae_np(preds=y_predict.to_numpy(), labels=y_test.to_numpy())
+def eval_historical_average(df, period):
+    y_predict, y_test = historical_average_predict(df, period=period, test_ratio=0.2)
+    rmse = util.rmse(y_test.to_numpy(), y_predict.to_numpy())
+    mape = util.mape(y_test.to_numpy(), y_predict.to_numpy())
+    mae = util.mae(y_test.to_numpy(), y_predict.to_numpy())
+
+
     metrics = {
         "MAE": mae,
         "RMSE": rmse,
         "MAPE": mape
     }
-    with open("metrics_results.txt", "w") as f:
-        for name, value in metrics.items():
-            f.write(f"{name}: {value:.4f}\n")
+    return metrics
+
 
 
 
 
 if __name__=="__main__":
 
-    #Our historical average runs the following way:
-    paths=["../temp/aqi"] #TODO, add the paths to the 
-    
-    #Todo, finish writing this script, output to file and everything.
+
+    paths=["aqi",]
     for p in paths:
+        fname=p
+        p="../temp/"+p
         df_list=util.wide2long(p)
-        for df in df_list:
-            #TODO: Change the output of the below so that stuff actually works
-            eval_historical_average(df)
-        if len(df_list)>1:
-            #TODO: Merge the error metric (or not??)
-            pass
+
+        df=df_list[0]
+        zero_count = df.eq(0).sum().sum()
+
+        res=eval_historical_average(df, period=24 * 7)
+        print(res)
+        with open(p+"2.txt", "w") as f:
+            for name, value in res.items():
+                f.write(f"{name}: {value:.4f}\n")
 
     
