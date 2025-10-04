@@ -115,5 +115,5 @@ def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH, dataset_sele
         _cleanup(out_path)
     
 if __name__=="__main__":
-    prepare()
+    prepare(dataset_select=["metrla"])
 

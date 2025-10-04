@@ -131,6 +131,7 @@ def get_node_list(path):
     return nodes
 
 #-----------Functions acting on edges.csv-----------------
+
 def exp_decay_weights(path, r, tau):
     df=pd.read_csv(path+"/edges.csv") #Our from, to, cost edges dataframe
     nodes=get_node_list(path) #Get a list of all the node ids.

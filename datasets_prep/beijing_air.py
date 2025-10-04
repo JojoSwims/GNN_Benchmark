@@ -189,7 +189,7 @@ def _cleanup(working_dir):
 
 
 def prepare(download=True, cleanup=True, out_path=None, subdivision="all"):
-    #Download and Manage paths if necessary
+    #Subdivisions: "all", "cluster1", "cluster2", "beijing"
     if out_path!=None:
         out_dir=out_path
     else:
@@ -204,4 +204,4 @@ def prepare(download=True, cleanup=True, out_path=None, subdivision="all"):
         _cleanup(out_dir)
 
 if __name__=="__main__":
-    prepare()
+    prepare(subdivision="beijing")

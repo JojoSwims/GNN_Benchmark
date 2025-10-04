@@ -129,6 +129,7 @@ def print_metrics(results):
 if __name__ == "__main__":
     PATH = "../temp/aqi"
     ORDER = (3, 0, 1)
+    #Set the seasonal order to something meaningful
     SEASONAL_ORDER = (1, 0, 0, 12)
     TRAIN_RATIO = 0.8
 
