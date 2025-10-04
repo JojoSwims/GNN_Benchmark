@@ -136,7 +136,8 @@ def mae(y_true, y_pred, mask=None):
     """
     validity_mask = _resolve_mask(y_true, mask=mask)
     errors = np.abs(y_true - y_pred)
-    return _masked_mean(errors, validity_mask)
+    res=_masked_mean(errors, validity_mask)
+    return float(np.round(res, 3))
 
 
 def rmse(y_true, y_pred, mask=None):
@@ -161,7 +162,9 @@ def rmse(y_true, y_pred, mask=None):
     validity_mask = _resolve_mask(y_true, mask=mask)
     squared_errors = (y_true - y_pred) ** 2
     mse = _masked_mean(squared_errors, validity_mask)
-    return float(np.sqrt(mse)) if np.isfinite(mse) else mse
+    res= float(np.sqrt(mse)) if np.isfinite(mse) else mse
+    return float(np.round(res, 3))
+
 
 
 def mape(y_true, y_pred, mask=None, eps=1e-6):
@@ -189,7 +192,8 @@ def mape(y_true, y_pred, mask=None, eps=1e-6):
     validity_mask = _resolve_mask(y_true, mask=mask)
     denom = np.clip(np.abs(y_true), eps, None)
     percentage_errors = np.abs((y_true - y_pred) / denom) * 100
-    return _masked_mean(percentage_errors, validity_mask)
+    res= _masked_mean(percentage_errors, validity_mask)
+    return float(np.round(res, 3))
 
 if __name__=="__main__":
     pass

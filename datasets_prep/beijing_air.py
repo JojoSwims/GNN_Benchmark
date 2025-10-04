@@ -204,4 +204,4 @@ def prepare(download=True, cleanup=True, out_path=None, subdivision="all"):
         _cleanup(out_dir)
 
 if __name__=="__main__":
-    prepare(subdivision="beijing")
+    prepare(subdivision="cluster1")
