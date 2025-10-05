@@ -27,7 +27,7 @@ def kalman_impute(df: pd.DataFrame, minutes_in_step: int = 5, train_ratio: float
     idx_te  = df.index[n_train:]
 
     imputed = df.copy()
-    mask    = df.isna()
+    mask    = df.notna().astype(bool)
 
     for i in range(df.shape[1]):
         y_tr = pd.to_numeric(df.iloc[:n_train, i], errors="coerce")
@@ -221,29 +221,24 @@ def from_name(name, index, order, seasonal_order, steps):
     write_errors_txt(res, p+".txt")
 
 def do_all():
-    #from_name("metrla", 0, order=0, seasonal_order=0, steps=5)
-    #from_name("pemsbay", 0, order=0, seasonal_order=0, steps=5)
-    #from_name("aqi", 0, order=0, seasonal_order=0, steps=60)
-    from_name("elergone", 0, order=0, seasonal_order=0, steps=15)
-    from_name("PEMS04", 2, order=0, seasonal_order=0, steps=15)
-    from_name("PEMS08", 2, order=0, seasonal_order=0, steps=15)
+    from_name("metrla", 0, order=(1,0,1), seasonal_order=(1,1,1,288), steps=5)
+    from_name("pemsbay", 0, order=(2,0,1), seasonal_order=(1,1,1,288), steps=5)
+    from_name("aqi", 0, order=(1,0,1), seasonal_order=(1,1,1,24), steps=60)
+    from_name("elergone", 0, order=(1,1,1), seasonal_order=(1,1,1,96), steps=15)
+    from_name("PEMS04", 2, order=(1,0,1), seasonal_order=(0,1,1,288), steps=15)
+    from_name("PEMS08", 2, order=(2,0,2), seasonal_order=(0,1,1,288), steps=15)
 
 
 if __name__ == "__main__":
+
+
+    do_all()
+
+    """
     df=pd.read_csv("test.csv")
     df_full, mask=kalman_impute(df, minutes_in_step=5)
     print(mask)
     preds=batch_predict_by_sensor(df_full, mask, order=(3,0,1), seasonal_order=(1, 0, 0, 6))
     res=compute_errors_by_h(preds)
     write_errors_txt(res, "res.txt")
-
-    #do_all()
-    """PATH = "../temp/aqi"
-    ORDER = (3, 0, 1)
-    #Set the seasonal order to something meaningful
-    SEASONAL_ORDER = (1, 0, 0, 12)
-    TRAIN_RATIO = 0.8
-
-    results = run_pipeline(PATH, order=ORDER, seasonal_order=SEASONAL_ORDER, train_ratio=TRAIN_RATIO)
-    print_metrics(results)
     """

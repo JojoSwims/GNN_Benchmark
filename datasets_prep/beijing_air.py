@@ -172,9 +172,9 @@ def _convert_to_ir(in_path, out_path, node_ids, features=KEPT_FEATURES):
 
     df.to_csv(out_path/"series.csv", index=False)
 
-    # Get the mask and output it:
-    missing_mask= df[[ts_col, node_col]].join(df[feat_cols].isna())
-    missing_mask.to_csv(out_path/"mask.csv", index=False)
+    # Get the mask (True indicates an observed/original value) and output it:
+    observation_mask = df[[ts_col, node_col]].join(df[feat_cols].notna())
+    observation_mask.to_csv(out_path/"mask.csv", index=False)
 
     # Get the adjacency matrix
     adjacency_matrix=_get_adj_matrix(out_path, node_ids)

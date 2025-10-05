@@ -46,7 +46,7 @@ def kalman_impute(df: pd.DataFrame, minutes_in_step: int = 5, train_ratio: float
     idx_te  = df.index[n_train:]
 
     imputed = df.copy()
-    mask    = df.isna()
+    mask = df.notna()
 
     for i in range(df.shape[1]):
         y_tr = pd.to_numeric(df.iloc[:n_train, i], errors="coerce")

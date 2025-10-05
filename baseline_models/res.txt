@@ -1,20 +1,20 @@
 Horizon 1
-  MAE: nan
-  RMSE: nan
-  MAPE: nan
+  MAE: 54.2050
+  RMSE: 221.9340
+  MAPE: 7.9180
 
 Horizon 3
-  MAE: nan
-  RMSE: nan
-  MAPE: nan
+  MAE: 112.2090
+  RMSE: 323.0350
+  MAPE: 13.9960
 
 Horizon 6
-  MAE: nan
-  RMSE: nan
-  MAPE: nan
+  MAE: 199.8330
+  RMSE: 446.7660
+  MAPE: 23.3130
 
 Horizon 12
-  MAE: nan
-  RMSE: nan
-  MAPE: nan
+  MAE: 333.0560
+  RMSE: 576.7730
+  MAPE: 38.8560
 

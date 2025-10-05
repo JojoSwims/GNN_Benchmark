@@ -78,8 +78,8 @@ def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH):
     #Output our mask:
     id_cols   = df.columns[:2]
     feat_cols = df.columns[2]
-    missing_mask = df[id_cols].join(df[feat_cols].isna())
-    missing_mask.to_csv(out_path/"mask.csv", index=False)
+    observation_mask = df[id_cols].join(df[feat_cols].notna())
+    observation_mask.to_csv(out_path/"mask.csv", index=False)
     
     if cleanup:
         try:
