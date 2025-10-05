@@ -1,0 +1,20 @@
+Horizon 1
+  MAE: nan
+  RMSE: nan
+  MAPE: nan
+
+Horizon 3
+  MAE: nan
+  RMSE: nan
+  MAPE: nan
+
+Horizon 6
+  MAE: nan
+  RMSE: nan
+  MAPE: nan
+
+Horizon 12
+  MAE: nan
+  RMSE: nan
+  MAPE: nan
+

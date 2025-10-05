@@ -1,0 +1,249 @@
+import pandas as pd
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+import numpy as np
+
+import util
+
+
+def kalman_impute(df: pd.DataFrame, minutes_in_step: int = 5, train_ratio: float = 0.8):
+    """
+    Impute NaNs column-wise using a UnobservedComponents (local level + deterministic daily/weekly seasonality).
+    Fits parameters on the first `train_ratio` fraction (train) and applies to the rest (test) without refitting.
+    Returns (imputed_df, missing_mask).
+    """
+    # periods from sampling step
+    daily  = max(2, int(round(1440 / minutes_in_step)))
+    weekly = max(2, daily * 7)
+
+    freq_seasonal = [
+        {"period": daily,  "harmonics": 5},  # daily cycle
+        {"period": weekly, "harmonics": 1},  # weekly cycle
+    ]
+    stochastic_freq_seasonal = [False, False]
+
+    n_train = int(round(len(df) * train_ratio))
+    idx_tr  = df.index[:n_train]
+    idx_te  = df.index[n_train:]
+
+    imputed = df.copy()
+    mask    = df.isna()
+
+    for i in range(df.shape[1]):
+        y_tr = pd.to_numeric(df.iloc[:n_train, i], errors="coerce")
+        y_te = pd.to_numeric(df.iloc[n_train:, i], errors="coerce")
+
+        # if train has no finite values, skip this column
+        if not np.isfinite(y_tr).any():
+            continue
+
+        model = UnobservedComponents(
+            endog=y_tr,
+            level="llevel",
+            freq_seasonal=freq_seasonal,
+            stochastic_freq_seasonal=stochastic_freq_seasonal
+        )
+        res = model.fit(disp=False)
+
+        # in-sample predictions for train, condition on observed points
+        pred_tr = res.predict(start=idx_tr[0], end=idx_tr[-1], dynamic=False)
+        imputed.iloc[:n_train, i] = y_tr.fillna(pred_tr)
+
+        # apply fixed parameters to test without refit; condition on observed test points
+        if len(idx_te) > 0:
+            appended = res.append(endog=y_te, refit=False)
+            pred_te = appended.predict(start=idx_te[0], end=idx_te[-1], dynamic=False)
+            imputed.iloc[n_train:, i] = y_te.fillna(pred_te)
+
+    return imputed, mask
+
+def _is_time_like_col(s: pd.Series) -> bool:
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return True
+    if pd.api.types.is_numeric_dtype(s):
+        return False
+    try:
+        pd.to_datetime(s, errors="raise", infer_datetime_format=True)
+        return True
+    except Exception:
+        return False
+
+
+def split_into_sensor_frames(df: pd.DataFrame, mask: pd.DataFrame):
+    """
+    Returns dict[sensor_id] -> (one_col_df, one_col_mask), skipping col0 if time-like.
+    Assumes df and mask share the same index/columns.
+    """
+    start_col = 1 if _is_time_like_col(df.iloc[:, 0]) else 0
+    out = {}
+    for j in range(start_col, df.shape[1]):
+        col = df.columns[j]
+        out[col] = (df.iloc[:, [j]].copy(), mask.iloc[:, [j]].copy())
+    return out
+
+
+def sarima_forecast(df, mask, order=(3, 0, 1), seasonal_order=(1, 0, 0, 12), train_ratio=0.8):
+    """
+    Our Sarima forecast, for one sensor.
+    """
+    horizons = (1, 3, 6, 12)
+    y = df.iloc[:, 0]
+    y_mask=mask.iloc[:, 0]
+    y_train, _, y_test = util.time_splits(y, train_frac=train_ratio, val_frac=0)
+    _,_,mask_test=util.time_splits(y_mask, train_frac=train_ratio, val_frac=0)
+    res = SARIMAX(y_train, order=order, seasonal_order=seasonal_order).fit()
+
+    predictions = {}
+    for horizon in horizons:
+        if len(y_test) < horizon:
+            continue
+
+        res_h = res.apply(endog=y_train)
+        preds = []
+        max_index = len(y_test) - horizon + 1
+
+        for i in range(max_index):
+            forecast = res_h.forecast(steps=horizon)
+            preds.append(float(forecast.iloc[horizon - 1]))
+            res_h = res_h.extend([y_test.iloc[i]])
+
+        pred_index = y_test.index[horizon - 1 :]
+        aligned_truth = y_test.iloc[horizon - 1 : horizon - 1 + len(preds)]
+        aligned_mask = mask_test.iloc[horizon - 1 : horizon - 1 + len(preds)]
+        predictions[horizon] = pd.DataFrame(
+            {"y_true": aligned_truth.to_numpy(dtype=float), "y_pred": preds, "mask":aligned_mask},
+            index=pred_index,
+        )
+    return predictions
+
+def batch_predict_by_sensor(df: pd.DataFrame, mask: pd.DataFrame, order, seasonal_order):
+    """
+    1) Split into per-sensor (1-col) frames for values and mask.
+    2) Run sarima_forecast(one_col_df, one_col_mask) per sensor.
+    3) Merge per-horizon outputs into DataFrames with identical column order.
+
+    Returns:
+      {
+        "y_pred": {h: DataFrame},
+        "y_true": {h: DataFrame},
+        "y_mask": {h: DataFrame}
+      }
+    """
+    sensor_map = split_into_sensor_frames(df, mask)  # expects {sensor_id: (df_1col, mask_1col)}
+
+    per_h_pred, per_h_true, per_h_mask = {}, {}, {}
+
+    for sensor_id, (df_one, mask_one) in sensor_map.items():
+        out = sarima_forecast(df_one, mask_one, order, seasonal_order)  # {h: DataFrame['y_true','y_pred','mask']}
+
+        for h, df_h in out.items():
+            per_h_pred.setdefault(h, {})[sensor_id] = df_h["y_pred"]
+            per_h_true.setdefault(h, {})[sensor_id] = df_h["y_true"]
+            per_h_mask.setdefault(h, {})[sensor_id] = df_h["mask"]
+
+    # Stitch per horizon; enforce a consistent column order
+    y_pred, y_true, y_mask = {}, {}, {}
+    for h in per_h_pred:
+        df_pred = pd.concat(per_h_pred[h], axis=1)
+        cols = sorted(df_pred.columns)  # deterministic ordering across all three
+        y_pred[h] = df_pred[cols]
+        y_true[h] = pd.concat(per_h_true[h], axis=1)[cols]
+        y_mask[h] = pd.concat(per_h_mask[h], axis=1)[cols]
+
+    return {"y_pred": y_pred, "y_true": y_true, "y_mask": y_mask}
+
+def compute_errors_by_h(pred_bundle):
+    """
+    Compute overall MAE/RMSE/MAPE per horizon h from the dict returned by
+    batch_predict_by_sensor(...).
+
+    Parameters
+    ----------
+    pred_bundle : dict
+        {
+          "y_pred": {h: pd.DataFrame},  # index: timestamps, columns: sensors
+          "y_true": {h: pd.DataFrame},
+          "y_mask": {h: pd.DataFrame}   # boolean or 0/1; same shape as above
+        }
+
+    Returns
+    -------
+    dict[int, dict[str, float]]
+        { h: {"MAE": float, "RMSE": float, "MAPE": float} }
+    """
+    y_pred_dict = pred_bundle["y_pred"]
+    y_true_dict = pred_bundle["y_true"]
+    y_mask_dict = pred_bundle["y_mask"]
+
+    results = {}
+    # Iterate over horizons that exist in predictions
+    for h in y_pred_dict:
+        y_pred_df = y_pred_dict[h]
+        y_true_df = y_true_dict[h]
+        mask_df   = y_mask_dict.get(h, None)
+
+        # Flatten all sensors/timestamps into arrays
+        y_pred = y_pred_df.to_numpy(dtype=float)
+        y_true = y_true_df.to_numpy(dtype=float)
+        mask   = None if mask_df is None else mask_df.to_numpy().astype(bool)
+
+        results[h] = {
+            "MAE":  util.mae(y_true, y_pred, mask=mask),
+            "RMSE": util.rmse(y_true, y_pred, mask=mask),
+            "MAPE": util.mape(y_true, y_pred, mask=mask),
+        }
+        print(h)
+        print(results[h])
+
+    return results
+
+def write_errors_txt(results, path):
+    """
+    results: {h: {"MAE": float, "RMSE": float, "MAPE": float}, ...}
+    path: output file path, e.g. "errors.txt"
+    """
+    with open(path, "w", encoding="utf-8") as f:
+        for h in sorted(results):
+            f.write(f"Horizon {h}\n")
+            for name, value in results[h].items():
+                f.write(f"  {name}: {value:.4f}\n")
+            f.write("\n")
+
+def from_name(name, index, order, seasonal_order, steps):
+    p=name
+    p="../temp/"+p
+    df_list=util.wide2long(p)
+    df=df_list[index]
+    print(df)
+    df_full, mask=kalman_impute(df, minutes_in_step=steps)
+    preds=batch_predict_by_sensor(df_full, mask, order, seasonal_order)
+    res=compute_errors_by_h(preds)
+    write_errors_txt(res, p+".txt")
+
+def do_all():
+    #from_name("metrla", 0, order=0, seasonal_order=0, steps=5)
+    #from_name("pemsbay", 0, order=0, seasonal_order=0, steps=5)
+    #from_name("aqi", 0, order=0, seasonal_order=0, steps=60)
+    from_name("elergone", 0, order=0, seasonal_order=0, steps=15)
+    from_name("PEMS04", 2, order=0, seasonal_order=0, steps=15)
+    from_name("PEMS08", 2, order=0, seasonal_order=0, steps=15)
+
+
+if __name__ == "__main__":
+    df=pd.read_csv("test.csv")
+    df_full, mask=kalman_impute(df, minutes_in_step=5)
+    print(mask)
+    preds=batch_predict_by_sensor(df_full, mask, order=(3,0,1), seasonal_order=(1, 0, 0, 6))
+    res=compute_errors_by_h(preds)
+    write_errors_txt(res, "res.txt")
+
+    #do_all()
+    """PATH = "../temp/aqi"
+    ORDER = (3, 0, 1)
+    #Set the seasonal order to something meaningful
+    SEASONAL_ORDER = (1, 0, 0, 12)
+    TRAIN_RATIO = 0.8
+
+    results = run_pipeline(PATH, order=ORDER, seasonal_order=SEASONAL_ORDER, train_ratio=TRAIN_RATIO)
+    print_metrics(results)
+    """
