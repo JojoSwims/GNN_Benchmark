@@ -2,6 +2,7 @@ import pandas as pd
 from statsmodels.tsa.statespace.structural import UnobservedComponents
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 import numpy as np
+from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype
 
 import util
 
@@ -12,6 +13,16 @@ def kalman_impute(df: pd.DataFrame, minutes_in_step: int = 5, train_ratio: float
     Fits parameters on the first `train_ratio` fraction (train) and applies to the rest (test) without refitting.
     Returns (imputed_df, missing_mask).
     """
+    # --- NEW: move datetime column to index if needed (and sanitize index) ---
+    if len(df.columns) > 0 and is_datetime64_any_dtype(df.iloc[:, 0]):
+        df = df.set_index(df.columns[0])             # CHANGED: make the datetime the index
+    if is_datetime64_any_dtype(df.index):
+        df = df[~df.index.duplicated(keep="first")]  # CHANGED: drop duplicate stamps
+        df = df.sort_index()                         # CHANGED: monotonic
+        try:
+            df.index = df.index.tz_convert(None)     # CHANGED: tz-naive if tz-aware
+        except Exception:
+            pass
     # periods from sampling step
     daily  = max(2, int(round(1440 / minutes_in_step)))
     weekly = max(2, daily * 7)
@@ -86,6 +97,7 @@ def sarima_forecast(df, mask, order=(3, 0, 1), seasonal_order=(1, 0, 0, 12), tra
     """
     Our Sarima forecast, for one sensor.
     """
+    print(df)
     horizons = (1, 3, 6, 12)
     y = df.iloc[:, 0]
     y_mask=mask.iloc[:, 0]
