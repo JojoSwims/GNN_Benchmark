@@ -6,6 +6,10 @@ from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype
 
 import util
 
+def _minutes_to_freq(minutes: int) -> str:
+    """Return a pandas offset alias like '5min' or '1H'."""
+    return f"{minutes//60}H" if minutes % 60 == 0 else f"{minutes}min"
+
 
 def kalman_impute(df: pd.DataFrame, minutes_in_step: int = 5, train_ratio: float = 0.8):
     """
@@ -13,12 +17,12 @@ def kalman_impute(df: pd.DataFrame, minutes_in_step: int = 5, train_ratio: float
     Fits parameters on the first `train_ratio` fraction (train) and applies to the rest (test) without refitting.
     Returns (imputed_df, missing_mask).
     """
-    # --- NEW: move datetime column to index if needed (and sanitize index) ---
+    freq_str = _minutes_to_freq(minutes_in_step)
     if len(df.columns) > 0 and is_datetime64_any_dtype(df.iloc[:, 0]):
-        df = df.set_index(df.columns[0])             # CHANGED: make the datetime the index
+        df = df.set_index(df.columns[0])
     if is_datetime64_any_dtype(df.index):
-        df = df[~df.index.duplicated(keep="first")]  # CHANGED: drop duplicate stamps
-        df = df.sort_index()                         # CHANGED: monotonic
+        df = df[~df.index.duplicated(keep="first")]
+        df = df.sort_index()
         try:
             df.index = df.index.tz_convert(None)     # CHANGED: tz-naive if tz-aware
         except Exception:
