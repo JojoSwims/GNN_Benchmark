@@ -1,7 +1,14 @@
 import numpy as np
 import pandas as pd
 import h5py
+from datetime import datetime
 
+
+
+def log_status(message: str) -> None:
+    """Print a timestamped status message that flushes immediately."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
 
 
 def time_splits(series_or_df, train_frac=0.7, val_frac=0.1):
@@ -16,9 +23,14 @@ def time_splits(series_or_df, train_frac=0.7, val_frac=0.1):
     train = x.iloc[:i1]
     val   = x.iloc[i1:i2]
     test  = x.iloc[i2:]
+    log_status(
+        "Time split completed: "
+        f"total={n}, train={len(train)}, val={len(val)}, test={len(test)}"
+    )
     return train, val, test
 
 def wide2long(path):
+    log_status(f"Loading wide CSV from {path}/series.csv")
     df=pd.read_csv(path+"/series.csv")
     #For each column c after and including the third column, make a dataframe composed of the first two columns and c
     ts_col, node_col = df.columns[:2]
@@ -39,6 +51,11 @@ def wide2long(path):
            .reset_index()
            .rename(columns={"index": ts_col}))
         out.append(wide)
+        log_status(
+            "Converted column "
+            f"'{c}' to wide format with shape {wide.shape}"
+        )
+    log_status(f"Completed wide2long conversion with {len(out)} frames")
     return out
     #Return the list of dataframes.
 
