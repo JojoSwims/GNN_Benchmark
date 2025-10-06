@@ -11,10 +11,6 @@ def _minutes_to_freq(minutes: int) -> str:
     """Return a pandas offset alias like '5min' or '1H'."""
     return f"{minutes//60}H" if minutes % 60 == 0 else f"{minutes}min"
 
-def _minutes_to_freq(minutes: int) -> str:
-    """Return a pandas offset alias like '5min' or '1H'."""
-    return f"{minutes//60}H" if minutes % 60 == 0 else f"{minutes}min"
-
 
 def kalman_impute(df: pd.DataFrame, minutes_in_step: int = 5, train_ratio: float = 0.8):
     """
@@ -72,7 +68,8 @@ def kalman_impute(df: pd.DataFrame, minutes_in_step: int = 5, train_ratio: float
             endog=y_tr,
             level="llevel",
             freq_seasonal=freq_seasonal,
-            stochastic_freq_seasonal=stochastic_freq_seasonal
+            stochastic_freq_seasonal=stochastic_freq_seasonal,
+            freq=freq_str 
         )
         res = model.fit(disp=False)
         log_status(f"Model fit complete for column '{df.columns[i]}'")
@@ -124,10 +121,11 @@ def split_into_sensor_frames(df: pd.DataFrame, mask: pd.DataFrame):
     return out
 
 
-def sarima_forecast(df, mask, order=(3, 0, 1), seasonal_order=(1, 0, 0, 12), train_ratio=0.8):
+def sarima_forecast(df, mask, order=(3, 0, 1), seasonal_order=(1, 0, 0, 12), train_ratio=0.8, minutes_in_step=5):
     """
     Our Sarima forecast, for one sensor.
     """
+    freq_str = _minutes_to_freq(minutes_in_step)
     series_name = df.columns[0] if len(df.columns) else "<unknown>"
     log_status(
         f"Starting SARIMA forecast for series '{series_name}' with {len(df)} rows"
@@ -140,7 +138,12 @@ def sarima_forecast(df, mask, order=(3, 0, 1), seasonal_order=(1, 0, 0, 12), tra
     log_status(
         f"Series '{series_name}': train={len(y_train)}, test={len(y_test)}"
     )
-    res = SARIMAX(y_train, order=order, seasonal_order=seasonal_order).fit()
+    res = SARIMAX(
+        y_train,
+        order=order,
+        seasonal_order=seasonal_order,
+        freq=freq_str
+    ).fit()
     log_status(
         f"Fitted SARIMA model for series '{series_name}' with order={order} "
         f"and seasonal_order={seasonal_order}"
@@ -179,7 +182,7 @@ def sarima_forecast(df, mask, order=(3, 0, 1), seasonal_order=(1, 0, 0, 12), tra
     log_status(f"Finished SARIMA forecast for series '{series_name}'")
     return predictions
 
-def batch_predict_by_sensor(df: pd.DataFrame, mask: pd.DataFrame, order, seasonal_order):
+def batch_predict_by_sensor(df: pd.DataFrame, mask: pd.DataFrame, order, seasonal_order, minutes_in_step):
     """
     1) Split into per-sensor (1-col) frames for values and mask.
     2) Run sarima_forecast(one_col_df, one_col_mask) per sensor.
@@ -202,7 +205,7 @@ def batch_predict_by_sensor(df: pd.DataFrame, mask: pd.DataFrame, order, seasona
         log_status(
             f"Processing sensor '{sensor_id}' ({idx}/{len(sensor_map)})"
         )
-        out = sarima_forecast(df_one, mask_one, order, seasonal_order)  # {h: DataFrame['y_true','y_pred','mask']}
+        out = sarima_forecast(df_one, mask_one, order, seasonal_order, minutes_in_step)  # {h: DataFrame['y_true','y_pred','mask']}
 
         for h, df_h in out.items():
             per_h_pred.setdefault(h, {})[sensor_id] = df_h["y_pred"]
@@ -295,7 +298,7 @@ def from_name(name, index, order, seasonal_order, steps):
         f"Selected DataFrame at index {index} for dataset '{name}' with shape {df.shape}"
     )
     df_full, mask=kalman_impute(df, minutes_in_step=steps)
-    preds=batch_predict_by_sensor(df_full, mask, order, seasonal_order)
+    preds=batch_predict_by_sensor(df_full, mask, order, seasonal_order, minutes_in_step=steps)
     res=compute_errors_by_h(preds)
     write_errors_txt(res, p+".txt")
     log_status(f"Completed pipeline for dataset '{name}'")
