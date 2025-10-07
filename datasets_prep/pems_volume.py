@@ -83,12 +83,18 @@ def _individual_prepare(out_dir, dataset):
     longs = [d.reindex(columns=['node', names[i]]) for i, d in enumerate(longs)]
     
     #Combine them into one dataframe:
-    df= pd.concat([d.set_index('node', append=True) for d in longs], axis=1).rename_axis(['ts','node']).sort_index()
+    df = (
+        pd.concat([d.set_index('node', append=True) for d in longs], axis=1)
+          .rename_axis(['ts', 'node'])
+          .sort_index()
+          .reset_index()
+          .rename(columns={'node': 'node_id'})
+    )
 
     #Output it to our directory
     dest = out_dir / name
-    dest.mkdir(parents=True, exist_ok=True) 
-    df.to_csv(dest / "series.csv")
+    dest.mkdir(parents=True, exist_ok=True)
+    df.to_csv(dest / "series.csv", index=False)
     
     #Delete empty lines from outdire/name+".csv" sure distancescsv has right form (delete empty lines)
     src = out_dir / f"{name}.csv"

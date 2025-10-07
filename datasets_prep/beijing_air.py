@@ -162,6 +162,8 @@ def _convert_to_ir(in_path, out_path, node_ids, features=KEPT_FEATURES):
 
     feat_cols = [c for c in features if c in df.columns[2:]]
     df = df[[ts_col, node_col, *feat_cols]].copy()
+    df.rename(columns={ts_col: "ts", node_col: "node_id"}, inplace=True)
+    ts_col, node_col = "ts", "node_id"
 
     # Treat zeros as missing values as soon as we have the feature columns
     if feat_cols:
