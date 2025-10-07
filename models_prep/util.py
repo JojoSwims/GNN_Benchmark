@@ -1,4 +1,4 @@
-    
+
 import pandas as pd
 import numpy as np
 import pickle
@@ -29,31 +29,55 @@ def series_csv_to_h5(series_csv: str, h5_path: str):
     
     table.to_hdf(h5_path, key="df")
 
-#TODO: Understand this function
-#TODO: Add something related to symmetric entries for undirected graphs!!!
-#TODO: There is a problem with this function. If a node has no edges, it will be absent.
-#This is something that needs to be fixed, potentially by getting the node list from the metadata as part of the prep process.
-def edges_csv_to_adj(edges_csv: str, pkl_path: str):
-    """Create adj_mx.pkl from edges.csv."""
-    edges = pd.read_csv(edges_csv)
-    #Ensures our columns have the correct names
-    edges.rename(columns={edges.columns[0]: "src", edges.columns[1]: "dst", **({edges.columns[2]: "weight"} if edges.shape[1] >= 3 else {})}, inplace=True)
+def get_node_list(path):
+    """Get a list of individual nodes from our series.csv file"""
+    df=pd.read_csv(path+"/series.csv")
+    #Get all unique values from the second column:
+    nodes=pd.unique(df.iloc[:, 1])
+    return nodes
 
-    node_ids = sorted(pd.unique(edges[["src", "dst"]].to_numpy().ravel()))
-    id2ind = {nid: i for i, nid in enumerate(node_ids)}
-    adj = np.zeros((len(node_ids), len(node_ids)), dtype=float)
-
-    if "weight" in edges.columns:
-        for src, dst, w in edges[["src", "dst", "weight"]].to_numpy():
-            adj[id2ind[src], id2ind[dst]] = w
+def edges_to_np_array(path, dataset_name):
+    """Takes our from, to, cost format adjacency matrix and turns it into an nxn array (for n nodes)"""
+    if dataset_name in ["metrla", "pemsbay"]:
+        symmetric=False
+    elif dataset_name in ["PEMS08", "PEMS04", "aqi"]:
+        symmetric=True
     else:
-        for src, dst in edges[["src", "dst"]].to_numpy():
-            adj[id2ind[src], id2ind[dst]] = 1.0
+        raise NotImplementedError("Dataset name is not in supported Datasets list")
+    df=pd.read_csv(path+"/edges.csv") #Our from, to, cost edges dataframe
+    nodes=get_node_list(path) #Get a list of all the node ids.
 
-    #TODO: Make sure we expect a diagonal with 1.0 and not some other value
+
+
+    src_col = df.columns[0]
+    dst_col = df.columns[1]
+    cost_col = df.columns[2]
+
+    A = (
+        df.pivot_table(index=src_col, columns=dst_col, values=cost_col, fill_value=0.0)
+          .reindex(index=nodes, columns=nodes, fill_value=0.0)
+          .to_numpy(dtype=float)
+    )
+    
+    if symmetric:
+        print(dataset_name)
+        A = np.maximum(A, A.T)
+    np.fill_diagonal(A, 1.0)
+
+    return A, nodes
+
+def edges_csv_to_adj(path: str, pkl_path: str, datataset_name):
+    """Create adj_mx.pkl from edges.csv.
+    IMPORTANT: path is the path to the folder containing all the dataset's intermediate representation.
+    Dataset name is the name of the folder ex: metrla
+    """
+    adj, nodes=edges_to_np_array(path, datataset_name)
+    id2ind = {nid: i for i, nid in enumerate(nodes)}
+
     np.fill_diagonal(adj, 1.0)
     with open(pkl_path, "wb") as f:
-        pickle.dump((node_ids, id2ind, adj), f)
+        pickle.dump((nodes, id2ind, adj), f)
+    return adj
 
 
 def write_sensor_ids(edges_csv: str, output_txt: str):
@@ -142,3 +166,6 @@ def series_csv_to_npz(series_csv, npz_path, feature_cols: list[str] | None = Non
         node_ids=node_ids,
         feature_names=feature_names,
     )
+
+if __name__=="__main__":
+    print(edges_csv_to_adj("../temp/metrla", "here", "metrla").shape)

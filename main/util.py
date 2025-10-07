@@ -6,7 +6,8 @@ from statsmodels.tsa.statespace.structural import UnobservedComponents
 
 
 
-
+#THIS IS A FUNCTION REPO, DO NOT IMPORT THIS CODE, COPY PASTE THE FUNCTIONS WHERE NEEDED.
+#TEMPORARY SOLUTION UNTIL A BETTER SYSTEM IS DESIGNED.
 
 #----------Functions acting on series.csv---------------
 
