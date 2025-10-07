@@ -8,27 +8,34 @@ from pathlib import Path
 FIRST_COLUMN_NAME="value1"
 
 
-def series_csv_to_h5(series_csv: str, h5_path: str):
-    """Convert series.csv into the HDF5 format expected by generate_training_data.py.
+def series_csv_to_h5(series_csv: str, h5_path: str, value_col_idx: int = 0) -> None:
+    # load + standardize names
+    df = pd.read_csv(series_csv)
+    if df.columns[0] != "ts" or df.columns[1] != "node_id":
+        df = df.rename(columns={df.columns[0]: "ts", df.columns[1]: "node_id"})
+    df["ts"] = pd.to_datetime(df["ts"], errors="coerce")
+    df = df.dropna(subset=["ts"])
+    df["node_id"] = df["node_id"].astype(str)
+
+    # choose the value column by *index* among non ('ts','node_id') columns — one line:
+    value_col = [c for c in df.columns if c not in ("ts", "node_id")][value_col_idx]
+
+    # dedupe (ts, node_id) pairs; keep last
+    df = df.drop_duplicates(subset=["ts", "node_id"], keep="last")
+
+    # pivot → T×N
+    wide = df.pivot(index="ts", columns="node_id", values=value_col).sort_index()
+
+
+    # float64, NaN → 0.0, unnamed index
+    wide = wide.astype(np.float64).fillna(0.0)
+    wide.index.name = None
+    wide.columns = wide.columns.astype(str)
+
+    # write in fixed format (gives df/axis0, df/axis1, df/block0_items, df/block0_values)
+    wide.to_hdf(h5_path, key="df", mode="w")
+    print(f"✓ Wrote {h5_path} | shape={wide.shape} | value_col='{value_col}'")
     
-    Parameters
-    ----------
-    series_csv : str
-        Path to the input CSV file.
-    h5_path : str
-        Path to the output HDF5 file.
-    value_col : str or None
-        Name of the value column to pivot. If None, use all columns except 'ts' and 'node_id'.
-    """
-    df = pd.read_csv(series_csv, parse_dates=["ts"])
-    df.rename(columns={df.columns[0]: "ts", df.columns[1]: "node_id"}, inplace=True)
-
-
-    value_cols = [c for c in df.columns if c not in ("ts", "node_id")]
-    table = df.pivot(index="ts", columns="node_id", values=value_cols)
-    
-    table.to_hdf(h5_path, key="df")
-
 def get_node_list(path):
     """Get a list of individual nodes from our series.csv file"""
     df=pd.read_csv(path+"/series.csv")
@@ -168,4 +175,5 @@ def series_csv_to_npz(series_csv, npz_path, feature_cols: list[str] | None = Non
     )
 
 if __name__=="__main__":
-    print(edges_csv_to_adj("../temp/metrla", "here", "metrla").shape)
+    series_csv_to_h5(series_csv="../temp/metrla/series.csv", h5_path="test.h5")
+
