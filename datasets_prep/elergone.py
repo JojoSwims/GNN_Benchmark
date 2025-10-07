@@ -66,9 +66,9 @@ def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH):
     #Pivot the dataframe to our intermediate representation:
     df = (
         df.stack()
-          .rename_axis(["timestamp", "node"])
+          .rename_axis(["ts", "node_id"])
           .reset_index(name="value")
-          .sort_values("timestamp", kind="mergesort")
+          .sort_values("ts", kind="mergesort")
           .reset_index(drop=True)
     )
 
