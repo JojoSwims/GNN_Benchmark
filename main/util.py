@@ -84,6 +84,9 @@ def series2tensor(path):
     ts_col, node_col = cols[0], cols[1]
     ch_cols = cols[2:]
 
+    # Print the columns that become channels (C)
+    print("Channel columns (C):", list(ch_cols))
+
     #Keeps track of order and allows us to preserve order.
     ts_order   = pd.Index(pd.unique(df[ts_col]))
     node_order = pd.Index(pd.unique(df[node_col]))

@@ -17,9 +17,9 @@ TODO: Document how to actually run graph_wavenet with the necessary function cal
 =>Basically, how do we pass these data files to the model afterwards.
 """
 
-def series_csv_to_h5(series_csv: str, h5_path: str):
+def series_csv_to_h5(series_csv: str, h5_path: str, value_col=0):
     """Convert series.csv into the HDF5 format expected by generate_training_data.py."""
-    util.series_csv_to_h5(series_csv, h5_path)
+    util.series_csv_to_h5(series_csv, h5_path, value_col)
 
 def edges_csv_to_adj(path: str, pkl_path: str, model_name):
     util.edges_csv_to_adj(path, pkl_path, model_name)

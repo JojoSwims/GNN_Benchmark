@@ -1,0 +1,25 @@
+THE BELOW TESTS ARE FOR METRLA
+Afterwards, extra tests and checks are necessary to check behavior with datasets that do not have the same shape.
+=>The above refers to two dimensions (How are timestamps dealt with, how are )
+
+Fully running and operational:
+
+Awaiting check by Guillermo, thinks look good on my side:
+-GraphWaveNet (h5(DCRNN), pickle (Only shape was tested))
+-GPST (npz, adj:same as our format, might need to rename columns)
+
+Code Finished, awaiting testing:
+-ASTGCN (npz, txt)
+-GTS (h5, txt)
+-MTGNN (h5, pickle, txt)
+
+
+Code not completed:
+-D2STGCN (Code is started however)
+-MTGODE
+-STAEFORMER
+
+Todo:
+    -Test npz
+    -Test pickle (Need to check if columns are identical even if ordering is different)
+    -Test txt

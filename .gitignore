@@ -2,4 +2,7 @@
 input.txt
 list_of_models.txt
 /baseline_models/old/
-/models_prep/testing.py
+/models_prep/testingh5.py
+/models_prep/testingnpz.py
+/models_prep/testingtxt.py
+/models_prep/testingpickle.py

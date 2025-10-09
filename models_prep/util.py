@@ -127,6 +127,7 @@ def series_csv_to_npz(series_csv, npz_path, feature_cols: list[str] | None = Non
     """
     # Load CSV
     df = pd.read_csv(series_csv, parse_dates=["ts"])
+    df = df.fillna(0)
     df.rename(columns={df.columns[0]: "ts", df.columns[1]: "node_id"}, inplace=True)
 
 
@@ -161,6 +162,11 @@ def series_csv_to_npz(series_csv, npz_path, feature_cols: list[str] | None = Non
     # Stack features -> (T, N, F)
     data = np.stack(planes, axis=-1)
 
+    if len(planes) == 1:
+        data = planes[0]                           # (T, N)
+    else:
+        data = np.stack(planes, axis=-1)          # (T, N, F)
+
     # Save
     timestamps = pd.Index(all_ts).values.astype("datetime64[ns]")
     feature_names = np.array(feature_cols, dtype=object)
@@ -175,5 +181,5 @@ def series_csv_to_npz(series_csv, npz_path, feature_cols: list[str] | None = Non
     )
 
 if __name__=="__main__":
-    series_csv_to_h5(series_csv="../temp/metrla/series.csv", h5_path="test.h5")
+    series_csv_to_npz(series_csv="../temp/metrla/series.csv", npz_path="test.npz")
 

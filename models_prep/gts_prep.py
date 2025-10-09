@@ -14,9 +14,9 @@ TODO: Document how to actually run GTS with the necessary function calls
 =>Will also need to take care of the YAML file.
 """
 
-def series_csv_to_h5(series_csv: str, h5_path: str):
+def series_csv_to_h5(series_csv: str, h5_path: str, value_col=0):
     """Convert series.csv into the HDF5 format expected by generate_training_data.py."""
-    util.series_csv_to_h5(series_csv, h5_path)
+    util.series_csv_to_h5(series_csv, h5_path, value_col)
 
 
 def write_sensor_ids(edges_csv: str, output_txt: str):
