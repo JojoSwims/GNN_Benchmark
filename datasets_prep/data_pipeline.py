@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
-
+import os
+from pems_speed import METRLA_NODE_ORDER
 
 #TODO: Persistence as an imputation method.
 
@@ -94,17 +95,62 @@ def get_split_timestamps(path: str, train_ratio: float = 0.7, val_ratio: float =
 
 #------------Windowization------------------------
 
-def windowize(path, input_cols: list[int], target_cols: list[int], L: int, H: int, y_start: int = 1):
+def windowize(path, input_cols: list[int], target_cols: list[int], L: int, H: int, y_start: int = 1, desired_node_order: list | None = None):
     """
-    df columns: [ts, node, v1, v2, ...]
-    input_cols/target_cols: ints where 0 -> v1 (3rd column), 1 -> v2, ...
-    Returns:
+    Build sliding windows from series.csv (columns: [ts, node, v1, v2, ...]) and
+    return input/output tensors plus the relative index offsets used to slice them.
+
+    Parameters
+    ----------
+    path : str
+        Directory containing series.csv.
+    input_cols : list[int]
+        Indices of input value columns (0 -> v1, 1 -> v2, ...).
+    target_cols : list[int]
+        Indices of target value columns (0 -> v1, 1 -> v2, ...).
+    L : int
+        Input window length (number of past timesteps per sample).
+        For a sample ending at index t, inputs cover [t-(L-1), ..., t].
+    H : int
+        Forecast horizon length (number of future timesteps per sample).
+        For a sample ending at index t, targets cover [t + y_start, ..., t + y_start + H - 1].
+    y_start : int, default=1
+        Gap between the last input time t and the first predicted time.
+        y_start=1 → first target is strictly after t; y_start=0 would include t itself.
+
+    Returns
+    -------
+    x : ndarray, shape (S, L, N, F_in)
+        S = number of samples (windows), L = input_length, N = number of nodes,
+        F_in = number of input channels (len(input_cols)).
+    y : ndarray, shape (S, H, N, F_y)
+        H = output_length (forecast horizon), F_y = number of target channels (len(target_cols)).
+    x_offsets : ndarray, shape (L, 1)
+        Relative indices used to slice each input window, with 0 denoting the *latest observed*
+        timestep in the input window. Concretely: [-L+1, ..., -1, 0].
+        Example: L=12 → [-11, -10, ..., -1, 0].
+    y_offsets : ndarray, shape (H, 1)
+        Relative indices used to slice each target window *after* the last input time t.
+        Concretely: [y_start, y_start+1, ..., y_start+H-1].
+        Example: y_start=1, H=12 → [1, 2, ..., 12].
+
+    Notes
+    -----
+    Valid sample end indices t satisfy:
+      t >= L-1  and  t <= T - (y_start + H - 1) - 1,
+    ensuring both input [t-(L-1):t] and target [t+y_start : t+y_start+H] exist.
+
+    Shapes reference
+    ----------------
       x: (S, L, N, F_in)
       y: (S, H, N, F_y)
-    S = num_samples = number of sliding windows we generated.
-    L = input_length = how many past steps in each input window.
-    N = num_nodes = number of sensors/nodes (one per column in the wide pivot).
-    F_in = input_dim = number of input feature channels you included (size of input_cols).
+      where:
+        S = num_samples (number of sliding windows),
+        L = input_length (past steps),
+        H = output_length (future steps),
+        N = num_nodes (unique nodes/sensors),
+        F_in = len(input_cols),
+        F_y  = len(target_cols).
     """
     df=pd.read_csv(path+"/series.csv")
     ts_col, node_col = df.columns[0], df.columns[1]
@@ -122,7 +168,14 @@ def windowize(path, input_cols: list[int], target_cols: list[int], L: int, H: in
     d[ts_col] = pd.to_datetime(d[ts_col], errors="coerce")
     d = d.sort_values([ts_col, node_col]).reset_index(drop=True)
     timestamps = pd.Index(sorted(d[ts_col].dropna().unique()))
-    nodes      = pd.Index(sorted(d[node_col].dropna().unique()))
+
+    d[node_col] = d[node_col].astype(str)
+    if desired_node_order is not None:
+        # Enforce the provided order (cast to str to avoid dtype mismatches)
+        desired_nodes = pd.Index([str(n) for n in desired_node_order])
+    else:
+        # Fall back to data-driven (sorted unique)
+        desired_nodes = pd.Index(sorted(d[node_col].dropna().astype(str).unique()))
 
     # pivot helper -> (T, N, F)
     def to_array(names):
@@ -130,7 +183,7 @@ def windowize(path, input_cols: list[int], target_cols: list[int], L: int, H: in
         for c in names:
             w = (d[[ts_col, node_col, c]]
                  .pivot(index=ts_col, columns=node_col, values=c)
-                 .reindex(index=timestamps, columns=nodes))
+                 .reindex(index=timestamps, columns=desired_nodes))
             mats.append(w.to_numpy(dtype=float))
         return np.stack(mats, axis=-1)  # (T, N, F)
 
@@ -151,7 +204,12 @@ def windowize(path, input_cols: list[int], target_cols: list[int], L: int, H: in
 
     x = np.stack(xs, axis=0) if S > 0 else np.empty((0, L, N, F_in))
     y = np.stack(ys, axis=0) if S > 0 else np.empty((0, H, N, F_y))
-    return x, y
+
+    # 0 is the latest observed sample.
+    x_offsets = np.sort(np.concatenate((np.arange(-(L - 1), 1, 1),)))
+    # Predict the next one hour
+    y_offsets = np.sort(np.arange(y_start, (H + 1), 1))
+    return x, y, x_offsets, y_offsets
 
 def zscore(path: str, channels, t_train_end: pd.Timestamp, t_val_end: pd.Timestamp, eps: float = 1e-8):
     """
@@ -278,32 +336,63 @@ def zscore(train, val=None, test=None, channels=None, eps=1e-8):
     return tr, va, te
 '''
 
+
+
 if __name__=="__main__":
-    PATH="../temp/metrla"
-    #ALL FUNCTIONS BELOW MODIFY series.csv directly.
-
-    #Add time channels (the graph wave net format)
-    add_time_channels(PATH, tod=True, tow=True)
-
-    #Get our train val timestamps, (used to split in later functions)
+    #Values to set:
+    PATH="../temp/metrla" #Choose the dataset here
     train_ratio=0.7
     val_ratio=0.1
+    tod_switch=True #Do we add time of day to our tensor?
+    tow_switch=False #Do we add time of week to our tensor
+    TARGET_DIR="./" #Output path for the npz files
+    #This is important, it enforces a column order to be consistent with the adj. matrix
+    #node_order=METRLA_NODE_ORDER #metrla
+    node_order=None #Elergone
+    #This is important, this is the columns to use for our X and Y tensors
+    #[0] only selects the original values, [0,1] select the original values and the added time of day
+    #In files with say 4 columns of value, we would input [0,1,2,3].
+    x_columns=[0,1]
+    y_columns=[0,1]
+
+    
+
+    #Add time channels (the graph wave net format)
+    add_time_channels(PATH, tod=True, tow=False)
+
+    #Get our train val timestamps, (used to split in later functions)
     t_train_end, t_val_end = get_split_timestamps(PATH, train_ratio, val_ratio)
 
-    #zscore
-    zscore(PATH, [0], t_train_end, t_val_end)
-
     #Fill in NaNs with something, either all zeroes or some smart_fill (to be implemented this weekend)
-    mask=fill_zeroes(PATH) #Can run windowize on this, need
-
-
+    mask=fill_zeroes(PATH)
 
     #Generate the train test val
-    x, y=windowize(PATH,[0,1,2],[0],12, 12)
-    x_train, x_test, x_val=split_tensor(x, train_ratio, val_ratio)
-    x_train, x_test, x_val=split_tensor(y, train_ratio, val_ratio)
+    x, y, x_offsets, y_offsets=windowize(PATH,x_columns,y_columns,12, 12, node_order)
+    x_train, x_val, x_test=split_tensor(x, train_ratio, val_ratio)
+    y_train, y_val, y_test=split_tensor(y, train_ratio, val_ratio)
 
-    #Can save these to disk with npz, then load them back when running the model
+
+    np.savez_compressed(
+        TARGET_DIR+"test.npz",
+        x=x_test,
+        y=y_test,
+        x_offsets=x_offsets.reshape(list(x_offsets.shape) + [1]),
+        y_offsets=y_offsets.reshape(list(y_offsets.shape) + [1]),
+    )
+    np.savez_compressed(
+        TARGET_DIR+"train.npz",
+        x=x_train,
+        y=y_train,
+        x_offsets=x_offsets.reshape(list(x_offsets.shape) + [1]),
+        y_offsets=y_offsets.reshape(list(y_offsets.shape) + [1]),
+    )
+    np.savez_compressed(
+        TARGET_DIR+"val.npz",
+        x=x_val,
+        y=y_val,
+        x_offsets=x_offsets.reshape(list(x_offsets.shape) + [1]),
+        y_offsets=y_offsets.reshape(list(y_offsets.shape) + [1]),
+    )
 
 
     
