@@ -415,25 +415,26 @@ def edges_csv_to_adj(path: str, pkl_path: str, datataset_name):
 
 if __name__=="__main__":
     #Values to set:
-    PATH="../temp/metrla" #Choose the dataset here
+    PATH="../temp/aqi" #Choose the dataset here
     train_ratio=0.7
     val_ratio=0.1
     tod_switch=True #Do we add time of day to our tensor?
-    tow_switch=False #Do we add time of week to our tensor
+    tow_switch=True #Do we add time of week to our tensor
     TARGET_DIR="./" #Output path for the npz files
     #This is important, it enforces a column order to be consistent with the adj. matrix
     #node_order=METRLA_NODE_ORDER #metrla
-    node_order=None #Elergone
+    #node_order=None #Elergone
+    node_order=CLUSTER2_NODE_ORDER
     #This is important, this is the columns to use for our X and Y tensors
     #[0] only selects the original values, [0,1] select the original values and the added time of day
     #In files with say 4 columns of value, we would input [0,1,2,3].
-    x_columns=[0,1]
-    y_columns=[0,1]
+    x_columns=[0,1,2]
+    y_columns=[0]
 
     
 
     #Add time channels (the graph wave net format)
-    add_time_channels(PATH, tod=True, tow=False)
+    add_time_channels(PATH, tod=tod_switch, tow=tow_switch)
 
     #Get our train val timestamps, (used to split in later functions)
     t_train_end, t_val_end = get_split_timestamps(PATH, train_ratio, val_ratio)
