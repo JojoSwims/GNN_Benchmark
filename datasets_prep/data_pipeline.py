@@ -407,7 +407,10 @@ def edges_csv_to_adj(path: str, pkl_path: str, datataset_name):
     """
     adj, nodes=edges_to_np_array(path, datataset_name)
     id2ind = {nid: i for i, nid in enumerate(nodes)}
-
+    print("edges_csv_to_adj")
+    print(nodes)
+    print(id2ind)
+    print(adj)
     np.fill_diagonal(adj, 1.0)
     with open(pkl_path, "wb") as f:
         pickle.dump((nodes, id2ind, adj), f)
@@ -443,11 +446,14 @@ if __name__=="__main__":
     mask=fill_zeroes(PATH)
 
     #Generate the train test val
-    x, y, x_offsets, y_offsets=windowize(PATH,x_columns,y_columns,12, 12, node_order)
+    x, y, x_offsets, y_offsets=windowize(PATH,x_columns,y_columns,L=12, H=12, y_start=1, desired_node_order=node_order)
     x_train, x_val, x_test=split_tensor(x, train_ratio, val_ratio)
     y_train, y_val, y_test=split_tensor(y, train_ratio, val_ratio)
 
-
+    print("x_train")
+    print(x_train)
+    print("------------")
+    print(y_train)
     np.savez_compressed(
         TARGET_DIR+"test.npz",
         x=x_test,
@@ -469,6 +475,8 @@ if __name__=="__main__":
         x_offsets=x_offsets.reshape(list(x_offsets.shape) + [1]),
         y_offsets=y_offsets.reshape(list(y_offsets.shape) + [1]),
     )
+
+    edges_csv_to_adj(path=PATH, pkl_path="./adj_mx.pkl", datataset_name="cluster2")
 
     #Generate the adjacency matrix:
     

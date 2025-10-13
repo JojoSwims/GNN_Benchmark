@@ -75,7 +75,8 @@ def _individual_prepare(out_dir, dataset):
     with np.load(out_dir/(name+".npz")) as data:
         #Shape of arr is (x,y,3)
         arr = data["data"]
-        
+    
+    N = arr.shape[1]
     # Creates on indexed dataframe for each of the three dimensions
     idx = pd.date_range(date, periods=arr.shape[0], freq="5min")
     dfs = [pd.DataFrame(x.squeeze(-1), index=idx) for x in np.split(arr, 3, axis=-1)]
@@ -86,24 +87,33 @@ def _individual_prepare(out_dir, dataset):
     longs = [df.stack().rename(names[i]).rename_axis(['ts','node']).reset_index().set_index('ts')[ [names[i],'node'] ] for i, df in enumerate(dfs)]
     longs = [d.reindex(columns=['node', names[i]]) for i, d in enumerate(longs)]
     
-    #Combine them into one dataframe:
+        # Combine channels (same), but we will reindex to full grid right after (NEW)
     df = (
-        pd.concat([d.set_index('node', append=True) for d in longs], axis=1)
-          .rename_axis(['ts', 'node'])
+        pd.concat([d.set_index("node", append=True) for d in longs], axis=1)
+          .rename_axis(["ts", "node"])
           .sort_index()
-          .reset_index()
-          .rename(columns={'node': 'node_id'})
     )
 
-    #Output it to our directory
+
+    full_grid = pd.MultiIndex.from_product([idx, range(N)], names=["ts", "node"])
+    df = df.reindex(full_grid)
+
+
+    df = df.reset_index().rename(columns={"node": "node_id"}).sort_values(["ts", "node_id"])
+
+
     dest = out_dir / name
     dest.mkdir(parents=True, exist_ok=True)
     df.to_csv(dest / "series.csv", index=False)
-    
-    #Delete empty lines from outdire/name+".csv" sure distancescsv has right form (delete empty lines)
+
+    mask = df[["ts", "node_id"]].copy()
+    for c in names:
+        mask[c] = df[c].notna()
+    mask.to_csv(dest / "mask.csv", index=False)
+
     src = out_dir / f"{name}.csv"
     cleaned = dest / "edges.csv"
-    cleaned.write_text("\n".join(ln for ln in src.read_text().splitlines() if ln.strip()))    
+    cleaned.write_text("\n".join(ln for ln in src.read_text().splitlines() if ln.strip()))
 
 def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH, dataset_select: list =DEFAULT_SET):
     if download:

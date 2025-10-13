@@ -74,6 +74,25 @@ def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH):
           .reset_index(drop=True)
     )
 
+    # ---------- NEW: densify to full 15-min × node grid ----------
+    df["ts"] = pd.to_datetime(df["ts"], errors="coerce")
+    # Ensure node ids are strings to match ELERGONE_NODE_ORDER
+    df["node_id"] = df["node_id"].astype(str)
+
+    full_ts = pd.date_range(df["ts"].min(), df["ts"].max(), freq="15min")
+    node_idx = pd.Index(ELERGONE_NODE_ORDER, dtype=str)
+
+    grid = (
+        pd.MultiIndex.from_product([full_ts, node_idx], names=["ts", "node_id"])
+          .to_frame(index=False)
+    )
+    df = (
+        grid.merge(df, on=["ts", "node_id"], how="left")
+            .sort_values(["ts", "node_id"])
+            .reset_index(drop=True)
+    )
+    # ---------- end NEW ----------
+
     #Output our intermediate representation:
     df.to_csv(out_path/"series.csv", index=False)
 

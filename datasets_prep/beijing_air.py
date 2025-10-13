@@ -172,17 +172,39 @@ def _convert_to_ir(in_path, out_path, node_ids, features=KEPT_FEATURES):
     if feat_cols:
         df.loc[:, feat_cols] = df.loc[:, feat_cols].where(df.loc[:, feat_cols] != 0)
 
-    # Sort by timestamp, then node_id
-    df = df.sort_values(by=[ts_col, node_col]).reset_index(drop=True)
+    #-------------Code that ensures full grid----------------
+    ts_unique = pd.Index(sorted(df[ts_col].dropna().unique()))
+    # Always assume hourly frequency
+    full_ts = pd.date_range(ts_unique[0], ts_unique[-1], freq="1H")
 
-    df.to_csv(out_path/"series.csv", index=False)
+    # Cartesian product of full_ts × node_ids
+    grid = (
+        pd.MultiIndex.from_product([full_ts, pd.Index(node_ids, dtype="int64")],
+                                   names=[ts_col, node_col])
+        .to_frame(index=False)
+    )
 
-    # Get the mask (True indicates an observed/original value) and output it:
-    observation_mask = df[[ts_col, node_col]].join(df[feat_cols].notna())
-    observation_mask.to_csv(out_path/"mask.csv", index=False)
+    # Left-join original data onto full grid (missing pairs -> NaN)
+    merged = grid.merge(df, on=[ts_col, node_col], how="left")
 
-    # Get the adjacency matrix
-    adjacency_matrix=_get_adj_matrix(out_path, node_ids)
+    # Sort for stable downstream processing
+    merged = merged.sort_values([ts_col, node_col]).reset_index(drop=True)
+
+    # ---------- Write series + mask on the full grid ----------
+    merged.to_csv(out_path / "series.csv", index=False)
+
+    if feat_cols:
+        mask = merged[[ts_col, node_col]].copy()
+        for c in feat_cols:
+            mask[c] = merged[c].notna()
+        mask.to_csv(out_path / "mask.csv", index=False)
+    else:
+        # Keep a minimal mask even if no features (all-False placeholder)
+        mask = merged[[ts_col, node_col]].copy()
+        mask.to_csv(out_path / "mask.csv", index=False)
+
+    # Adjacency (unchanged)
+    adjacency_matrix = _get_adj_matrix(out_path, node_ids)
     adjacency_matrix.to_csv(out_path / "edges.csv", index=False)
     
 def _cleanup(working_dir):

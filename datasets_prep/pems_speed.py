@@ -59,13 +59,17 @@ def _cleanup(target_dir):
     pass
 
 def _individual_prepare_data(out_dir, dataset):
-    if dataset=="metrla":
-        fpath=out_dir/"metr-la.h5"
-    elif dataset=="pemsbay":
-        fpath=out_dir/"pems-bay.h5"
+    if dataset == "metrla":
+        fpath = out_dir / "metr-la.h5"
+        enforced_nodes = METRLA_NODE_ORDER
+    elif dataset == "pemsbay":
+        fpath = out_dir / "pems-bay.h5"
+        enforced_nodes = PEMS_BAY_NODE_ORDER
     else:
-        raise NotImplementedError("An unaccepted dataset_select value was passed to prepare(), please pass a list containing one or both of 'metrla' and 'pemsbay")
-        
+        raise NotImplementedError(
+            "An unaccepted dataset_select value was passed to prepare(), "
+            "please pass a list containing one or both of 'metrla' and 'pemsbay'"
+        )        
     with pd.HDFStore(fpath, mode="r") as store:
         key = store.keys()[0]           # Here, '/df'
         wide = store.get(key)            # Is already a pandas dataframe.
@@ -80,6 +84,24 @@ def _individual_prepare_data(out_dir, dataset):
     if len(value_cols):
         long = long.copy()
         long.loc[:, value_cols] = long.loc[:, value_cols].where(long.loc[:, value_cols] != 0)
+    
+    # ---------- NEW: make series dense on 5-min × node grid ----------
+    # Ensure types
+    long["ts"] = pd.to_datetime(long["ts"], errors="coerce")
+    long["node_id"] = long["node_id"].astype("int64")
+
+    # Full 5-minute timeline (assume fixed 5-minute frequency)
+    ts_min, ts_max = long["ts"].min(), long["ts"].max()
+    full_ts = pd.date_range(ts_min, ts_max, freq="5min")
+
+    # Use enforced node order; ensure int64 dtype
+    node_idx = pd.Index(enforced_nodes, dtype="int64")
+
+    # Cartesian grid and left-merge (missing pairs -> NaN)
+    grid = pd.MultiIndex.from_product([full_ts, node_idx], names=["ts", "node_id"]).to_frame(index=False)
+    long = grid.merge(long, on=["ts", "node_id"], how="left").sort_values(["ts", "node_id"]).reset_index(drop=True)
+    # ---------- end NEW ----------
+    
     return long
 
 def _individual_prepare_adj(out_dir, dataset):
@@ -116,5 +138,5 @@ def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH, dataset_sele
         _cleanup(out_path)
     
 if __name__=="__main__":
-    prepare(dataset_select=["metrla"])
+    prepare()
 
