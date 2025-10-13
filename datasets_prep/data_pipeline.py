@@ -1,9 +1,17 @@
 import pandas as pd
 import numpy as np
 import os
-from pems_speed import METRLA_NODE_ORDER
+import csv
+import pickle
+from pathlib import Path
 
-#TODO: Persistence as an imputation method.
+#IMPORTANT, this is the enforced node_order to ensure there is a match between
+#the order of the adjacency matrix and the order of the channels
+from pems_speed import METRLA_NODE_ORDER, PEMS_BAY_NODE_ORDER
+from pems_volume import PEMS04_NODE_ORDER, PEMS08_NODE_ORDER
+from elergone import ELERGONE_NODE_ORDER
+from beijing_air import CLUSTER1_NODE_ORDER, CLUSTER2_NODE_ORDER, BEIJING_NODE_ORDER
+
 
 def series2tensor(path, impute:bool=False):
     """Converts a file with our intermediate representation into a (T,C,N) tensor"""
@@ -336,7 +344,74 @@ def zscore(train, val=None, test=None, channels=None, eps=1e-8):
     return tr, va, te
 '''
 #------------------------Adjacency Matrix----------------------------------
+#Three methods, txt, pickle, numpy array.
 
+#TXT:
+def write_sensor_ids(node_order: str, output_txt: str):
+    #Takes in one of the ordered node_lists importet
+    #E.g METRLA_NODE_ORDER, PEMS_BAY_NODE_ORDER
+    sensor_list = node_order
+    Path(output_txt).write_text(",".join(sensor_list))
+
+#NUMPY: 
+def edges_to_np_array(path, dataset_name):
+    """Takes our from, to, cost format adjacency matrix and turns it into an nxn array (for n nodes)"""
+    enforced_order=[]
+    if dataset_name in ["metrla", "pemsbay"]:
+        symmetric=False
+        if dataset_name=="metrla":
+            enforced_order=METRLA_NODE_ORDER
+        else:
+            enforced_order=PEMS_BAY_NODE_ORDER
+    elif dataset_name in ["PEMS08", "PEMS04", "beijing", "cluster1", "cluster2"]:
+        symmetric=True
+        if dataset_name == "PEMS08":
+            enforced_order=PEMS08_NODE_ORDER
+        elif dataset_name == "PEMS04":
+            enforced_order=PEMS04_NODE_ORDER
+        elif dataset_name == "beijing":
+            enforced_order=BEIJING_NODE_ORDER
+        elif dataset_name == "cluster1":
+            enforced_order=CLUSTER1_NODE_ORDER
+        else:
+            enforced_order=CLUSTER2_NODE_ORDER
+    else:
+        raise NotImplementedError("Dataset name is not in supported Datasets list")
+    df=pd.read_csv(path+"/edges.csv") #Our from, to, cost edges dataframe
+
+
+    src_col = df.columns[0]
+    dst_col = df.columns[1]
+    cost_col = df.columns[2]
+    df[src_col] = df[src_col].astype(str)
+    df[dst_col] = df[dst_col].astype(str)
+    nodes = [str(n) for n in enforced_order]
+
+    A = (
+        df.pivot_table(index=src_col, columns=dst_col, values=cost_col, fill_value=0.0)
+          .reindex(index=nodes, columns=nodes, fill_value=0.0)
+          .to_numpy(dtype=float)
+    )
+    
+    if symmetric:
+        A = np.maximum(A, A.T)
+    np.fill_diagonal(A, 1.0)
+
+    return A, nodes
+
+#PICKLE:
+def edges_csv_to_adj(path: str, pkl_path: str, datataset_name):
+    """Create adj_mx.pkl from edges.csv.
+    IMPORTANT: path is the path to the folder containing all the dataset's intermediate representation.
+    Dataset name is the name of the folder ex: metrla
+    """
+    adj, nodes=edges_to_np_array(path, datataset_name)
+    id2ind = {nid: i for i, nid in enumerate(nodes)}
+
+    np.fill_diagonal(adj, 1.0)
+    with open(pkl_path, "wb") as f:
+        pickle.dump((nodes, id2ind, adj), f)
+    return adj
 
 if __name__=="__main__":
     #Values to set:
@@ -394,6 +469,6 @@ if __name__=="__main__":
         y_offsets=y_offsets.reshape(list(y_offsets.shape) + [1]),
     )
 
-
+    #Generate the adjacency matrix:
     
 
