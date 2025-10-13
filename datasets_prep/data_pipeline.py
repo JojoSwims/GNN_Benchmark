@@ -335,7 +335,7 @@ def zscore(train, val=None, test=None, channels=None, eps=1e-8):
 
     return tr, va, te
 '''
-
+#------------------------Adjacency Matrix----------------------------------
 
 
 if __name__=="__main__":
