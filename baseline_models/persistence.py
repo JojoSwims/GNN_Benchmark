@@ -53,7 +53,7 @@ def persistence_forecast(df, horizons=(1, 3, 6, 12), train_ratio=0.8):
 
 
 if __name__=="__main__":
-  p="aqi"
+  p="PEMS08"
   p="../temp/"+p
   df_list=util.wide2long(p)
 

@@ -175,7 +175,7 @@ def _convert_to_ir(in_path, out_path, node_ids, features=KEPT_FEATURES):
     #-------------Code that ensures full grid----------------
     ts_unique = pd.Index(sorted(df[ts_col].dropna().unique()))
     # Always assume hourly frequency
-    full_ts = pd.date_range(ts_unique[0], ts_unique[-1], freq="1H")
+    full_ts = pd.date_range(ts_unique[0], ts_unique[-1], freq="1h")
 
     # Cartesian product of full_ts × node_ids
     grid = (

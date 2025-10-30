@@ -1,18 +1,22 @@
 THE BELOW TESTS ARE FOR METRLA
-Afterwards, extra tests and checks are necessary to check behavior with datasets that do not have the same shape.
-=>The above refers to two dimensions (How are timestamps dealt with, how are )
+
+
 
 Fully running and operational:
 
 Awaiting check by Guillermo, thinks look good on my side:
 -GraphWaveNet (h5(DCRNN), pickle (Only shape was tested))
+    =>Ran!!
+-MTGNN (h5, pickle, txt)
+    =>Ran
+    =>Can take in Node values
+-ATGCN=>Doable
+-GPTST=>Doable
 -GPST (npz, adj:same as our format, might need to rename columns)
 
 Code Finished, awaiting testing:
 -ASTGCN (npz, txt)
 -GTS (h5, txt)
--MTGNN (h5, pickle, txt)
-
 
 Code not completed:
 -D2STGCN (Code is started however)

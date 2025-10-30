@@ -67,7 +67,7 @@ def eval_historical_average(df, period):
 if __name__=="__main__":
 
 
-    paths=["aqi",]
+    paths=["PEMS04","PEMS08"]
     for p in paths:
         fname=p
         p="../temp/"+p

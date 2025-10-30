@@ -22,7 +22,7 @@ def series2tensor(path, impute:bool=False):
     ch_cols = cols[2:]
 
     # Print the columns that become channels (C)
-    print("Channel columns (C):", list(ch_cols))
+    #print("Channel columns (C):", list(ch_cols))
 
     #Keeps track of order and allows us to preserve order.
     ts_order   = pd.Index(pd.unique(df[ts_col]))
@@ -295,54 +295,6 @@ def split_tensor(tensor, train_split, val_split):
 
     return train, val, test
 
-'''
-def zscore(train, val=None, test=None, channels=None, eps=1e-8):
-    """
-    Standardize selected channels of (T, C, N) using TRAIN stats.
-    Per-(channel, node) normalization across time (axis=0).
-    Returns NEW arrays (inputs are not modified).
-
-    Args:
-        train, val, test : np.ndarray shaped (T, C, N)
-        channels         : list/array of channel indices
-                           None => all channels.
-        eps              : small value to avoid divide-by-zero.
-
-    Returns:
-        train_std, val_std, test_std
-    """
-    if train.ndim != 3:
-        raise ValueError("Expected (T, C, N) arrays.")
-
-    T, C, N = train.shape
-
-    # Normalize `channels` to integer indices
-    if channels is None:
-        ch_idx = np.arange(C)
-    else:
-        arr = np.asarray(channels)
-        ch_idx = np.unique(arr.astype(int))
-        if ch_idx.size and (ch_idx.min() < 0 or ch_idx.max() >= C):
-            raise IndexError(f"Channel indices must be in [0, {C-1}]")
-
-    tr = train.copy()
-    va = val.copy()   if val  is not None else None
-    te = test.copy()  if test is not None else None
-
-    for c in ch_idx:
-        # Per-node stats over time from TRAIN ONLY
-        mu    = np.nanmean(train[:, c, :], axis=0, keepdims=True)  # (1, N)
-        sigma = np.nanstd( train[:, c, :], axis=0, keepdims=True)  # (1, N)
-        sigma = np.where(np.isfinite(sigma) & (sigma > 0), sigma, 1.0)
-
-        tr[:, c, :] = (tr[:, c, :] - mu) / (sigma + eps)
-        if va is not None:
-            va[:, c, :] = (va[:, c, :] - mu) / (sigma + eps)
-        if te is not None:
-            te[:, c, :] = (te[:, c, :] - mu) / (sigma + eps)
-
-    return tr, va, te
-'''
 #------------------------Adjacency Matrix----------------------------------
 #Three methods, txt, pickle, numpy array.
 
@@ -407,10 +359,7 @@ def edges_csv_to_adj(path: str, pkl_path: str, datataset_name):
     """
     adj, nodes=edges_to_np_array(path, datataset_name)
     id2ind = {nid: i for i, nid in enumerate(nodes)}
-    print("edges_csv_to_adj")
-    print(nodes)
-    print(id2ind)
-    print(adj)
+
     np.fill_diagonal(adj, 1.0)
     with open(pkl_path, "wb") as f:
         pickle.dump((nodes, id2ind, adj), f)
@@ -419,20 +368,22 @@ def edges_csv_to_adj(path: str, pkl_path: str, datataset_name):
 if __name__=="__main__":
     #Values to set:
     PATH="../temp/aqi" #Choose the dataset here
+    DATASET_NAME="beijing"
     train_ratio=0.7
+    H=12
     val_ratio=0.1
     tod_switch=True #Do we add time of day to our tensor?
-    tow_switch=True #Do we add time of week to our tensor
+    tow_switch=False #Do we add time of week to our tensor
     TARGET_DIR="./" #Output path for the npz files
     #This is important, it enforces a column order to be consistent with the adj. matrix
     #node_order=METRLA_NODE_ORDER #metrla
     #node_order=None #Elergone
-    node_order=CLUSTER2_NODE_ORDER
+    node_order=BEIJING_NODE_ORDER
     #This is important, this is the columns to use for our X and Y tensors
     #[0] only selects the original values, [0,1] select the original values and the added time of day
     #In files with say 4 columns of value, we would input [0,1,2,3].
-    x_columns=[0,1,2]
-    y_columns=[0]
+    x_columns=[0,1]
+    y_columns=[0,1]
 
     
 
@@ -446,14 +397,11 @@ if __name__=="__main__":
     mask=fill_zeroes(PATH)
 
     #Generate the train test val
-    x, y, x_offsets, y_offsets=windowize(PATH,x_columns,y_columns,L=12, H=12, y_start=1, desired_node_order=node_order)
+    x, y, x_offsets, y_offsets=windowize(PATH,x_columns,y_columns,L=12, H=H, y_start=1, desired_node_order=node_order)
     x_train, x_val, x_test=split_tensor(x, train_ratio, val_ratio)
     y_train, y_val, y_test=split_tensor(y, train_ratio, val_ratio)
+    print(x_train.shape, y_train.shape)
 
-    print("x_train")
-    print(x_train)
-    print("------------")
-    print(y_train)
     np.savez_compressed(
         TARGET_DIR+"test.npz",
         x=x_test,
@@ -476,8 +424,9 @@ if __name__=="__main__":
         y_offsets=y_offsets.reshape(list(y_offsets.shape) + [1]),
     )
 
-    edges_csv_to_adj(path=PATH, pkl_path="./adj_mx.pkl", datataset_name="cluster2")
-
     #Generate the adjacency matrix:
+    edges_csv_to_adj(path=PATH, pkl_path="./adj_mx.pkl", datataset_name=DATASET_NAME)
+
+    
     
 
