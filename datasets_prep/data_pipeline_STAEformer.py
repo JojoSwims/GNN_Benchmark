@@ -13,7 +13,7 @@ from beijing_air import CLUSTER1_NODE_ORDER, CLUSTER2_NODE_ORDER, BEIJING_NODE_O
 
 #-----------------------Common Functions-------------------------------
 
-def series2tensor(path):
+def series2tensor(path, feature_column):
     """Converts our intermediate CSV into a tensor shaped (T, N, C)."""
     df = pd.read_csv(path + "/series.csv")
     cols = df.columns
@@ -23,16 +23,11 @@ def series2tensor(path):
     # Preserve original order of timestamps/nodes
     ts_order   = pd.Index(pd.unique(df[ts_col]))
     node_order = pd.Index(pd.unique(df[node_col]))
-
-    matrices = []
-    for ch in ch_cols:
-        p = df.pivot(index=ts_col, columns=node_col, values=ch)
-        p = p.reindex(index=ts_order, columns=node_order)
-        matrices.append(p.to_numpy())  # each (T, N)
-
-    # 👇 change is here: stack along axis=2 to get (T, N, C)
-    arr = np.stack(matrices, axis=2)
-
+    
+    ch = ch_cols[feature_column]
+    p = df.pivot(index=ts_col, columns=node_col, values=ch)
+    p = p.reindex(index=ts_order, columns=node_order)
+    arr = np.expand_dims(p.to_numpy(), axis=2)
     return arr
 
 def build_index_from_data(
@@ -98,13 +93,14 @@ if __name__=="__main__":
     H=12
     L=12
     val_ratio=0.1
+    feature_column=0
     TARGET_DIR="./" #Output path for the npz files
 
 #-----------------------Generating Required Files for STAEFormer-------------------------------
 
     mask=dp.fill_zeroes(PATH)
     
-    data = series2tensor(PATH)
+    data = series2tensor(PATH, feature_column)
     index_dict = build_index_from_data(
             data=data,
             L=L,
