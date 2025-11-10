@@ -367,10 +367,10 @@ def edges_csv_to_adj(path: str, pkl_path: str, datataset_name):
 
 if __name__=="__main__":
     #Values to set:
-    PATH="../temp/aqi" #Choose the dataset here
-    DATASET_NAME="beijing"
+    
+    PATH="../temp/elergone" #Choose the dataset here
+    DATASET_NAME="cluster2"
     train_ratio=0.7
-    H=12
     val_ratio=0.1
     tod_switch=True #Do we add time of day to our tensor?
     tow_switch=False #Do we add time of week to our tensor
@@ -378,29 +378,31 @@ if __name__=="__main__":
     #This is important, it enforces a column order to be consistent with the adj. matrix
     #node_order=METRLA_NODE_ORDER #metrla
     #node_order=None #Elergone
-    node_order=BEIJING_NODE_ORDER
+    node_order=ELERGONE_NODE_ORDER
     #This is important, this is the columns to use for our X and Y tensors
     #[0] only selects the original values, [0,1] select the original values and the added time of day
     #In files with say 4 columns of value, we would input [0,1,2,3].
-    x_columns=[0,1]
-    y_columns=[0,1]
-
+    x_columns=[0]
+    y_columns=[0]
+    #SELECTION OF TARGET_SIZE:
+    H=12
+    y_start=1
+    mask=fill_zeroes(PATH)
     
 
     #Add time channels (the graph wave net format)
-    add_time_channels(PATH, tod=tod_switch, tow=tow_switch)
+    #add_time_channels(PATH, tod=tod_switch, tow=tow_switch)
 
     #Get our train val timestamps, (used to split in later functions)
     t_train_end, t_val_end = get_split_timestamps(PATH, train_ratio, val_ratio)
 
     #Fill in NaNs with something, either all zeroes or some smart_fill (to be implemented this weekend)
-    mask=fill_zeroes(PATH)
+    
 
     #Generate the train test val
-    x, y, x_offsets, y_offsets=windowize(PATH,x_columns,y_columns,L=12, H=H, y_start=1, desired_node_order=node_order)
+    x, y, x_offsets, y_offsets=windowize(PATH,x_columns,y_columns,L=12, H=H, y_start=y_start, desired_node_order=node_order)
     x_train, x_val, x_test=split_tensor(x, train_ratio, val_ratio)
     y_train, y_val, y_test=split_tensor(y, train_ratio, val_ratio)
-    print(x_train.shape, y_train.shape)
 
     np.savez_compressed(
         TARGET_DIR+"test.npz",
@@ -425,8 +427,4 @@ if __name__=="__main__":
     )
 
     #Generate the adjacency matrix:
-    edges_csv_to_adj(path=PATH, pkl_path="./adj_mx.pkl", datataset_name=DATASET_NAME)
-
-    
-    
-
+    #edges_csv_to_adj(path=PATH, pkl_path="./adj_mx.pkl", datataset_name=DATASET_NAME)

@@ -23,12 +23,17 @@ def series2tensor(path, feature_column):
     # Preserve original order of timestamps/nodes
     ts_order   = pd.Index(pd.unique(df[ts_col]))
     node_order = pd.Index(pd.unique(df[node_col]))
-    
-    ch = ch_cols[feature_column]
-    p = df.pivot(index=ts_col, columns=node_col, values=ch)
-    p = p.reindex(index=ts_order, columns=node_order)
-    arr = np.expand_dims(p.to_numpy(), axis=2)
+
+    selected = [ch_cols[i] for i in feature_column]
+    matrices = []
+    for ch in selected:
+        p = df.pivot(index=ts_col, columns=node_col, values=ch)
+        p = p.reindex(index=ts_order, columns=node_order)
+        matrices.append(p.to_numpy())
+
+    arr = np.stack(matrices, axis=2)
     return arr
+
 
 def build_index_from_data(
     data,        # numpy array of shape (T, N, C)
@@ -88,17 +93,22 @@ def save_data_npz(path, data):
 
 if __name__=="__main__":
     print("here")
-    PATH="../temp/pemsbay" #Choose the dataset here
+    PATH="../temp/PEMS04" #Choose the dataset here
     train_ratio=0.7
     H=12
     L=12
     val_ratio=0.1
-    feature_column=0
+    feature_column=(0,3,4)
     TARGET_DIR="./" #Output path for the npz files
+    #IMPORTANT: If one of the below is true, ADD 4 to the feature_column
+    #If both are true, add 4 and 5 to the feature_column.
+    tod_switch=True 
+    tow_switch=True
 
 #-----------------------Generating Required Files for STAEFormer-------------------------------
 
     mask=dp.fill_zeroes(PATH)
+    dp.add_time_channels(PATH, tod=tod_switch, tow=tow_switch)
     
     data = series2tensor(PATH, feature_column)
     index_dict = build_index_from_data(

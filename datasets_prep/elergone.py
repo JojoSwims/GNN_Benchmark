@@ -94,7 +94,7 @@ def prepare(download=True, cleanup=True, out_path=OUT_DEFAULT_PATH):
     # ---------- end NEW ----------
 
     #Output our intermediate representation:
-    df.to_csv(out_path/"series.csv", index=False)
+    df.to_csv(out_path/"series.csv", index=False, float_format="%.2f")
 
     #Output our mask:
     id_cols   = df.columns[:2]
