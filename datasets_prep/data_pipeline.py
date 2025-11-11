@@ -37,41 +37,6 @@ def series2tensor(path, impute:bool=False):
     return arr, mask
 
 
-
-def add_time_channels(path, tod : bool =True, tow : bool = True, toy:bool = False):
-    df = pd.read_csv(path+"/series.csv", parse_dates=[0])
-    ts_col = df.columns[0]
-    ts = pd.to_datetime(df[ts_col], errors="coerce")
-
-    if tod:
-        df["time_of_day"] = 0.0
-    if tow:
-        df["day_of_week"] = 0  # int; will overwrite below
-    if toy:
-        df["time_of_year"] = 0.0
-
-    if tod:
-        secs = (
-            ts.dt.hour.astype("int64") * 3600
-            + ts.dt.minute.astype("int64") * 60
-            + ts.dt.second.astype("int64")
-        )
-        df["time_of_day"] = secs / 86400.0  # [0,1)
-    if tow:
-        df["day_of_week"] = ts.dt.dayofweek.astype("int8")  # 0=Mon .. 6=Sun
-
-    if toy:
-        # day-of-year (1..365/366) + fractional day, normalized by year length
-        doy = ts.dt.dayofyear.astype("int64")
-        frac_day = df["time_of_day"] if tod else (
-            (ts.dt.hour*3600 + ts.dt.minute*60 + ts.dt.second) / 86400.0
-        )
-        is_leap = ts.dt.is_leap_year
-        year_len = np.where(is_leap.to_numpy(), 366.0, 365.0)
-        df["time_of_year"] = ((doy - 1) + frac_day.to_numpy()) / year_len  # [0,1)
-    df.to_csv(path+"/series.csv", index=False)
-    return df
-
 def get_split_timestamps(path: str, train_ratio: float = 0.7, val_ratio: float = 0.2):
     """
     Assumes df.columns[0] is the timestamp column.
@@ -265,7 +230,41 @@ def zscore(path: str, channels, t_train_end: pd.Timestamp, t_val_end: pd.Timesta
     out.to_csv(path+"/series.csv", index=False)
     return out, mu, sigma
 
-#--------------------Fill values------------------------------
+#--------------------Data Modification ------------------------------
+
+def add_time_channels(path, tod : bool =True, tow : bool = True, toy:bool = False):
+    df = pd.read_csv(path+"/series.csv", parse_dates=[0])
+    ts_col = df.columns[0]
+    ts = pd.to_datetime(df[ts_col], errors="coerce")
+
+    if tod:
+        df["time_of_day"] = 0.0
+    if tow:
+        df["day_of_week"] = 0  # int; will overwrite below
+    if toy:
+        df["time_of_year"] = 0.0
+
+    if tod:
+        secs = (
+            ts.dt.hour.astype("int64") * 3600
+            + ts.dt.minute.astype("int64") * 60
+            + ts.dt.second.astype("int64")
+        )
+        df["time_of_day"] = secs / 86400.0  # [0,1)
+    if tow:
+        df["day_of_week"] = ts.dt.dayofweek.astype("int8")  # 0=Mon .. 6=Sun
+
+    if toy:
+        # day-of-year (1..365/366) + fractional day, normalized by year length
+        doy = ts.dt.dayofyear.astype("int64")
+        frac_day = df["time_of_day"] if tod else (
+            (ts.dt.hour*3600 + ts.dt.minute*60 + ts.dt.second) / 86400.0
+        )
+        is_leap = ts.dt.is_leap_year
+        year_len = np.where(is_leap.to_numpy(), 366.0, 365.0)
+        df["time_of_year"] = ((doy - 1) + frac_day.to_numpy()) / year_len  # [0,1)
+    df.to_csv(path+"/series.csv", index=False)
+    return df
 
 def fill_zeroes(path):
 
@@ -275,6 +274,27 @@ def fill_zeroes(path):
     out.to_csv(path+"/series.csv", index=False)
 
     return mask
+
+
+def keep_midnight_and_noon(path: str) -> None:
+    """
+    Load CSV at `path`, keep only rows where ts is 00:00:00 or 12:00:00,
+    overwrite the same file.
+    """
+    df = pd.read_csv(path+"/series.csv")
+
+    # Ensure ts is datetime
+    df["ts"] = pd.to_datetime(df["ts"])
+
+    # Keep only 00:00:00 and 12:00:00
+    mask = (
+        df["ts"].dt.minute.eq(0)
+        & df["ts"].dt.second.eq(0)
+        & df["ts"].dt.hour.isin([0, 12])
+    )
+    df = df[mask]
+
+    df.to_csv(path+"/series.csv", index=False)
 
 #-------------------------------------------------------------
 
@@ -368,17 +388,16 @@ def edges_csv_to_adj(path: str, pkl_path: str, datataset_name):
 if __name__=="__main__":
     #Values to set:
     
-    PATH="../temp/elergone" #Choose the dataset here
-    DATASET_NAME="cluster2"
+    PATH="../temp/aqi" #Choose the dataset here
+    DATASET_NAME="beijing"
+    node_order=BEIJING_NODE_ORDER
     train_ratio=0.7
     val_ratio=0.1
-    tod_switch=True #Do we add time of day to our tensor?
+    tod_switch=False #Do we add time of day to our tensor?
     tow_switch=False #Do we add time of week to our tensor
     TARGET_DIR="./" #Output path for the npz files
     #This is important, it enforces a column order to be consistent with the adj. matrix
     #node_order=METRLA_NODE_ORDER #metrla
-    #node_order=None #Elergone
-    node_order=ELERGONE_NODE_ORDER
     #This is important, this is the columns to use for our X and Y tensors
     #[0] only selects the original values, [0,1] select the original values and the added time of day
     #In files with say 4 columns of value, we would input [0,1,2,3].
@@ -387,10 +406,10 @@ if __name__=="__main__":
     #SELECTION OF TARGET_SIZE:
     H=12
     y_start=1
-    mask=fill_zeroes(PATH)
     
-
-    #Add time channels (the graph wave net format)
+    #Data modification:
+    fill_zeroes(PATH)
+    keep_midnight_and_noon(PATH)
     #add_time_channels(PATH, tod=tod_switch, tow=tow_switch)
 
     #Get our train val timestamps, (used to split in later functions)
@@ -427,4 +446,4 @@ if __name__=="__main__":
     )
 
     #Generate the adjacency matrix:
-    #edges_csv_to_adj(path=PATH, pkl_path="./adj_mx.pkl", datataset_name=DATASET_NAME)
+    edges_csv_to_adj(path=PATH, pkl_path="./adj_mx.pkl", datataset_name=DATASET_NAME)
