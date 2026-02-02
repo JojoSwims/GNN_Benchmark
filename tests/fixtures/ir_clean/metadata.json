@@ -1,0 +1,19 @@
+{
+  "name": "dummy_ir",
+  "frequency": "1H",
+  "node_order": [
+    "A",
+    "B"
+  ],
+  "feature_columns": [
+    "speed",
+    "volume"
+  ],
+  "units": {
+    "speed": "unit",
+    "volume": "unit"
+  },
+  "source_url": "https://example.com/dummy",
+  "transform_history": [],
+  "extra": {}
+}
