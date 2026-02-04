@@ -136,6 +136,9 @@ from gnn_benchmark.transforms import (
 # Apply transforms (chainable)
 ir.apply(FillZeros()).apply(AddTimeFeatures())
 
+# Save the transformation:
+ir.save()
+
 # Check transform history
 print(ir.metadata.transform_history)
 # ['FillZeros(columns=all)', 'AddTimeFeatures(tod, dow)']
