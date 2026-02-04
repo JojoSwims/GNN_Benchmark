@@ -50,7 +50,6 @@ ir.apply(ZScoreNormalize(train_end="2015-01-01"))
 # 4. Export for a specific model
 exporter = STAEformerExporter()
 result = exporter.export(
-    workspace,
     ir,
     window_config=WindowConfig(input_length=12, horizon=12)
 )
@@ -186,8 +185,6 @@ loader = BeijingAirLoader(subdivision="all")      # 437 nodes
 
 ### Export Configuration
 
-Exporters follow the same pattern as dataset loaders: `exporter.export(workspace, ir, ...)`.
-
 ```python
 from gnn_benchmark.exporters import STAEformerExporter, WindowConfig, SplitConfig
 
@@ -207,12 +204,9 @@ split_config = SplitConfig(
     # test_ratio = 0.2 (implicit)
 )
 
-# Export using workspace (recommended)
+# Export the IR (must be linked to workspace)
 exporter = STAEformerExporter()
-result = exporter.export(workspace, ir, window_config, split_config)
-
-# Or use the convenience method if IR is already linked to workspace
-result = exporter.export_from_workspace(ir, window_config, split_config)
+result = exporter.export(ir, window_config, split_config)
 ```
 
 ## Baseline Models
@@ -423,7 +417,7 @@ class MyExporter(ModelExporter):
             split_config=split_config,
         )
 
-# Usage: exporter.export(workspace, ir, window_config, split_config)
+# Usage: exporter.export(ir, window_config, split_config)
 ```
 
 ## Data Format Specifications
