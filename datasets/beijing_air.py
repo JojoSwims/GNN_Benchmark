@@ -1,9 +1,13 @@
-"""Beijing Air Quality dataset loader."""
+"""Beijing Air Quality dataset loaders.
 
-import shutil
+Provides separate loaders for different air quality dataset subdivisions,
+allowing them to be used simultaneously in a workspace.
+"""
+
 import tempfile
 import urllib.request
 import zipfile
+from abc import abstractmethod
 from dataclasses import dataclass
 from math import asin, cos, radians, sin, sqrt
 from pathlib import Path
@@ -97,68 +101,54 @@ def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> f
     return R * c
 
 
-@dataclass
-class BeijingAirLoader(DatasetLoader):
+class _BaseAirQualityLoader(DatasetLoader):
     """
-    Loader for Beijing Air Quality dataset.
+    Base class for air quality dataset loaders.
 
-    Downloads PM2.5 concentration data for measuring stations in the
-    Beijing-Tianjin-Shenzhen-Guangzhou area.
-
-    Args:
-        subdivision: Which subset of stations to use:
-            - "beijing": Only Beijing city stations (36 nodes)
-            - "cluster1": Beijing-Tianjin region (284 nodes)
-            - "cluster2": Shenzhen-Guangzhou region (163 nodes)
-            - "all": All stations (437 nodes)
+    Provides shared download and conversion logic for the Microsoft Research
+    air quality dataset. Subclasses define which subdivision of stations to use.
     """
 
-    subdivision: str = "beijing"
+    @property
+    @abstractmethod
+    def _dataset_name(self) -> str:
+        """Return the dataset name for this loader."""
 
-    def __post_init__(self):
-        valid_subdivisions = {"beijing", "cluster1", "cluster2", "all"}
-        if self.subdivision not in valid_subdivisions:
-            raise ValueError(
-                f"Invalid subdivision '{self.subdivision}'. "
-                f"Must be one of: {valid_subdivisions}"
-            )
+    @property
+    @abstractmethod
+    def _node_order(self) -> list[int]:
+        """Return the node order for this subdivision."""
+
+    @property
+    @abstractmethod
+    def _description(self) -> str:
+        """Return the description for this dataset."""
 
     @property
     def info(self) -> DatasetInfo:
-        node_order = self._get_node_order()
-        name = f"beijing_air_{self.subdivision}"
-        if self.subdivision == "beijing":
-            name = "beijing_air"
-
         return DatasetInfo(
-            name=name,
+            name=self._dataset_name,
             url=URL,
             frequency="1H",
-            node_order=[str(n) for n in node_order],
+            node_order=[str(n) for n in self._node_order],
             feature_columns=["PM25_Concentration"],
             units={"PM25_Concentration": "ug/m3"},
-            description=f"Beijing Air Quality - {self.subdivision} subdivision",
+            description=self._description,
         )
 
-    def _get_node_order(self) -> list[int]:
-        if self.subdivision == "beijing":
-            return BEIJING_NODE_ORDER
-        elif self.subdivision == "cluster1":
-            return CLUSTER1_NODE_ORDER
-        elif self.subdivision == "cluster2":
-            return CLUSTER2_NODE_ORDER
-        else:  # all
-            return CLUSTER1_NODE_ORDER + CLUSTER2_NODE_ORDER
+    @abstractmethod
+    def _get_node_ids(self, data_dir: Path) -> list[int]:
+        """Get node IDs for this subdivision from the raw data."""
 
     def download_and_convert(self) -> tuple[pd.DataFrame, pd.DataFrame | None]:
-        """Download and convert Beijing Air Quality data."""
+        """Download and convert air quality data."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
             zip_path = tmpdir / "data.zip"
             extract_dir = tmpdir / "extracted"
 
             # Download
-            print(f"Downloading Beijing Air Quality data...")
+            print(f"Downloading {self._dataset_name} data...")
             urllib.request.urlretrieve(URL, str(zip_path))
 
             # Extract
@@ -194,37 +184,6 @@ class BeijingAirLoader(DatasetLoader):
 
         raise FileNotFoundError("Could not find data directory in extracted files")
 
-    def _get_node_ids(self, data_dir: Path) -> list[int]:
-        """Get node IDs for the selected subdivision."""
-        stations = pd.read_csv(data_dir / "station.csv")
-
-        if self.subdivision == "beijing":
-            district_ids = list(range(101, 117))  # Beijing districts
-            ids = stations.loc[
-                stations["district_id"].isin(district_ids), "station_id"
-            ].tolist()
-
-        elif self.subdivision in ("cluster1", "cluster2"):
-            cluster_number = int(self.subdivision[-1])
-            cities = pd.read_csv(data_dir / "city.csv")
-            city_ids = cities.loc[
-                cities["cluster_id"] == cluster_number, "city_id"
-            ].tolist()
-
-            districts = pd.read_csv(data_dir / "district.csv")
-            district_ids = districts.loc[
-                districts["city_id"].isin(city_ids), "district_id"
-            ].tolist()
-
-            ids = stations.loc[
-                stations["district_id"].isin(district_ids), "station_id"
-            ].tolist()
-
-        else:  # all
-            ids = stations["station_id"].tolist()
-
-        return ids
-
     def _convert_series(self, data_dir: Path, node_ids: list[int]) -> pd.DataFrame:
         """Convert air quality data to series DataFrame."""
         df = pd.read_csv(data_dir / "airquality.csv", parse_dates=[1])
@@ -248,7 +207,7 @@ class BeijingAirLoader(DatasetLoader):
         ts_unique = pd.Index(sorted(df["ts"].dropna().unique()))
         full_ts = pd.date_range(ts_unique[0], ts_unique[-1], freq="1H")
 
-        enforced_order = self._get_node_order()
+        enforced_order = self._node_order
         # Filter enforced_order to only include nodes that exist
         enforced_order = [n for n in enforced_order if n in node_ids]
 
@@ -289,3 +248,107 @@ class BeijingAirLoader(DatasetLoader):
 
         edges = pd.DataFrame(rows, columns=["src", "dst", "cost"])
         return edges
+
+
+@dataclass
+class BeijingAirLoader(_BaseAirQualityLoader):
+    """
+    Loader for Beijing Air Quality dataset (Beijing city stations only).
+
+    Downloads PM2.5 concentration data for 36 measuring stations in Beijing city.
+    """
+
+    @property
+    def _dataset_name(self) -> str:
+        return "beijing_air"
+
+    @property
+    def _node_order(self) -> list[int]:
+        return BEIJING_NODE_ORDER
+
+    @property
+    def _description(self) -> str:
+        return "Beijing Air Quality - Beijing city stations (36 nodes)"
+
+    def _get_node_ids(self, data_dir: Path) -> list[int]:
+        """Get node IDs for Beijing city stations."""
+        stations = pd.read_csv(data_dir / "station.csv")
+        district_ids = list(range(101, 117))  # Beijing districts
+        ids = stations.loc[
+            stations["district_id"].isin(district_ids), "station_id"
+        ].tolist()
+        return ids
+
+
+@dataclass
+class Cluster1AirLoader(_BaseAirQualityLoader):
+    """
+    Loader for Air Quality Cluster 1 dataset (Beijing-Tianjin region).
+
+    Downloads PM2.5 concentration data for 284 measuring stations in the
+    Beijing-Tianjin metropolitan area.
+    """
+
+    @property
+    def _dataset_name(self) -> str:
+        return "air_cluster1"
+
+    @property
+    def _node_order(self) -> list[int]:
+        return CLUSTER1_NODE_ORDER
+
+    @property
+    def _description(self) -> str:
+        return "Air Quality Cluster 1 - Beijing-Tianjin region (284 nodes)"
+
+    def _get_node_ids(self, data_dir: Path) -> list[int]:
+        """Get node IDs for Cluster 1 stations."""
+        stations = pd.read_csv(data_dir / "station.csv")
+        cities = pd.read_csv(data_dir / "city.csv")
+        districts = pd.read_csv(data_dir / "district.csv")
+
+        city_ids = cities.loc[cities["cluster_id"] == 1, "city_id"].tolist()
+        district_ids = districts.loc[
+            districts["city_id"].isin(city_ids), "district_id"
+        ].tolist()
+        ids = stations.loc[
+            stations["district_id"].isin(district_ids), "station_id"
+        ].tolist()
+        return ids
+
+
+@dataclass
+class Cluster2AirLoader(_BaseAirQualityLoader):
+    """
+    Loader for Air Quality Cluster 2 dataset (Shenzhen-Guangzhou region).
+
+    Downloads PM2.5 concentration data for 163 measuring stations in the
+    Shenzhen-Guangzhou metropolitan area.
+    """
+
+    @property
+    def _dataset_name(self) -> str:
+        return "air_cluster2"
+
+    @property
+    def _node_order(self) -> list[int]:
+        return CLUSTER2_NODE_ORDER
+
+    @property
+    def _description(self) -> str:
+        return "Air Quality Cluster 2 - Shenzhen-Guangzhou region (163 nodes)"
+
+    def _get_node_ids(self, data_dir: Path) -> list[int]:
+        """Get node IDs for Cluster 2 stations."""
+        stations = pd.read_csv(data_dir / "station.csv")
+        cities = pd.read_csv(data_dir / "city.csv")
+        districts = pd.read_csv(data_dir / "district.csv")
+
+        city_ids = cities.loc[cities["cluster_id"] == 2, "city_id"].tolist()
+        district_ids = districts.loc[
+            districts["city_id"].isin(city_ids), "district_id"
+        ].tolist()
+        ids = stations.loc[
+            stations["district_id"].isin(district_ids), "station_id"
+        ].tolist()
+        return ids
