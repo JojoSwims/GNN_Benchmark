@@ -438,22 +438,4 @@ A            C            4.2
 - `statsmodels`: For Kalman imputation and SARIMA baseline
 - `h5py`: For HDF5 export format (MTGNN)
 
-## License
-
-MIT License
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Citation
-
-If you use this toolkit in your research, please cite:
-
-```bibtex
-@software{gnn_benchmark,
-  title = {GNN Benchmark: A Toolkit for Benchmarking Graph Neural Networks on Spatiotemporal Data},
-  year = {2024},
-  url = {https://github.com/JojoSwims/GNN_Benchmark}
-}
 ```
