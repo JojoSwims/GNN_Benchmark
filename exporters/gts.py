@@ -30,7 +30,7 @@ class GTSExporter(ModelExporter):
     def name(self) -> str:
         return "gts"
 
-    def export(
+    def export_to_directory(
         self,
         ir: IntermediateRepresentation,
         output_dir: Path,

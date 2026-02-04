@@ -32,7 +32,7 @@ class MTGNNExporter(ModelExporter):
     def name(self) -> str:
         return "mtgnn"
 
-    def export(
+    def export_to_directory(
         self,
         ir: IntermediateRepresentation,
         output_dir: Path,

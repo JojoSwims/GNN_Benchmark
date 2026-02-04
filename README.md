@@ -49,7 +49,8 @@ ir.apply(ZScoreNormalize(train_end="2015-01-01"))
 
 # 4. Export for a specific model
 exporter = STAEformerExporter()
-result = exporter.export_from_workspace(
+result = exporter.export(
+    workspace,
     ir,
     window_config=WindowConfig(input_length=12, horizon=12)
 )
@@ -182,8 +183,10 @@ loader = BeijingAirLoader(subdivision="all")      # 437 nodes
 
 ### Export Configuration
 
+Exporters follow the same pattern as dataset loaders: `exporter.export(workspace, ir, ...)`.
+
 ```python
-from gnn_benchmark.exporters import WindowConfig, SplitConfig
+from gnn_benchmark.exporters import STAEformerExporter, WindowConfig, SplitConfig
 
 # Configure sliding windows
 window_config = WindowConfig(
@@ -201,8 +204,12 @@ split_config = SplitConfig(
     # test_ratio = 0.2 (implicit)
 )
 
-# Export
-result = exporter.export(ir, output_dir, window_config, split_config)
+# Export using workspace (recommended)
+exporter = STAEformerExporter()
+result = exporter.export(workspace, ir, window_config, split_config)
+
+# Or use the convenience method if IR is already linked to workspace
+result = exporter.export_from_workspace(ir, window_config, split_config)
 ```
 
 ## Baseline Models
@@ -288,6 +295,12 @@ workspace.list_exports("beijing_air")
 ir = workspace.load("beijing_air")
 ir = workspace.load("beijing_air", from_clean=True)
 
+# Prepare dataset (download + convert)
+ir = workspace.prepare(loader)
+
+# Export to model format
+result = workspace.export(exporter, ir, window_config, split_config)
+
 # Save/clear
 workspace.save_working(ir)
 workspace.clear_working("beijing_air")
@@ -369,23 +382,45 @@ class MyTransform(Transform):
 #### Custom Exporter
 
 ```python
-from gnn_benchmark.exporters import ModelExporter, ExportResult
+from gnn_benchmark.exporters import ModelExporter, ExportResult, WindowConfig, SplitConfig
+from pathlib import Path
 
 class MyExporter(ModelExporter):
     @property
     def name(self) -> str:
         return "my_model"
 
-    def export(self, ir, output_dir, window_config, split_config):
+    def export_to_directory(
+        self,
+        ir,
+        output_dir: Path,
+        window_config: WindowConfig,
+        split_config: SplitConfig,
+    ) -> ExportResult:
         # Use helper methods
         data = ir.to_tensor()
-        x, y = self._create_sliding_windows(data, ...)
-        train_x, val_x, test_x = self._split_by_time(x, ...)
+        x, y = self._create_sliding_windows(
+            data,
+            window_config.input_length,
+            window_config.horizon,
+        )
+        train_x, val_x, test_x = self._split_by_time(
+            x,
+            split_config.train_ratio,
+            split_config.val_ratio,
+        )
 
         # Save in your format
+        output_dir.mkdir(parents=True, exist_ok=True)
         ...
 
-        return ExportResult(files={"data": path}, ...)
+        return ExportResult(
+            files={"data": output_dir / "data.npz"},
+            window_config=window_config,
+            split_config=split_config,
+        )
+
+# Usage: exporter.export(workspace, ir, window_config, split_config)
 ```
 
 ## Data Format Specifications

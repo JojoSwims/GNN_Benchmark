@@ -35,7 +35,7 @@ class GraphWaveNetExporter(ModelExporter):
     def name(self) -> str:
         return "graph_wavenet"
 
-    def export(
+    def export_to_directory(
         self,
         ir: IntermediateRepresentation,
         output_dir: Path,
