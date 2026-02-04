@@ -8,9 +8,11 @@ and converting it to the intermediate representation format.
 Classes:
     DatasetLoader: Abstract base class for implementing custom dataset loaders.
 
-    BeijingAirLoader: Beijing Air Quality dataset (PM2.5 concentrations).
-        Supports subdivisions: "beijing" (36 nodes), "cluster1" (284 nodes),
-        "cluster2" (163 nodes), or "all" (437 nodes).
+    BeijingAirLoader: Beijing Air Quality dataset - Beijing city (36 nodes).
+
+    Cluster1AirLoader: Air Quality Cluster 1 - Beijing-Tianjin region (284 nodes).
+
+    Cluster2AirLoader: Air Quality Cluster 2 - Shenzhen-Guangzhou region (163 nodes).
 
     PEMSBayLoader: PEMS-BAY traffic speed dataset (325 sensors, 5-min).
         Requires `gdown` package for Google Drive download.
@@ -29,14 +31,19 @@ Classes:
 
 Example:
     >>> from gnn_benchmark import DataWorkspace
-    >>> from gnn_benchmark.datasets import BeijingAirLoader
+    >>> from gnn_benchmark.datasets import BeijingAirLoader, Cluster1AirLoader
     >>> workspace = DataWorkspace("./my_workspace")
-    >>> loader = BeijingAirLoader(subdivision="beijing")
-    >>> ir = loader.prepare(workspace)
+    >>> # Load multiple air quality datasets simultaneously
+    >>> beijing_ir = BeijingAirLoader().prepare(workspace)
+    >>> cluster1_ir = Cluster1AirLoader().prepare(workspace)
 """
 
 from gnn_benchmark.datasets.base import DatasetLoader
-from gnn_benchmark.datasets.beijing_air import BeijingAirLoader
+from gnn_benchmark.datasets.beijing_air import (
+    BeijingAirLoader,
+    Cluster1AirLoader,
+    Cluster2AirLoader,
+)
 from gnn_benchmark.datasets.elergone import ElergoneLoader
 from gnn_benchmark.datasets.pems_speed import PEMSBayLoader, MetroLALoader
 from gnn_benchmark.datasets.pems_volume import PEMS04Loader, PEMS08Loader
@@ -44,6 +51,8 @@ from gnn_benchmark.datasets.pems_volume import PEMS04Loader, PEMS08Loader
 __all__ = [
     "DatasetLoader",
     "BeijingAirLoader",
+    "Cluster1AirLoader",
+    "Cluster2AirLoader",
     "ElergoneLoader",
     "PEMSBayLoader",
     "MetroLALoader",
