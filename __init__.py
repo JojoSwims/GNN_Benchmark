@@ -27,7 +27,7 @@ Example usage:
 
     # Export for specific model
     exporter = STAEformerExporter()
-    result = exporter.export_from_workspace(
+    result = exporter.export(
         ir,
         window_config=WindowConfig(input_length=12, horizon=12)
     )

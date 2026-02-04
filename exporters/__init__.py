@@ -5,9 +5,6 @@ This module provides exporters that convert the IntermediateRepresentation
 to formats expected by various GNN models. Each exporter handles windowing,
 train/val/test splitting, and format-specific file generation.
 
-Exporters follow the same pattern as DatasetLoaders: the primary entry point
-is exporter.export(workspace, ir, ...) which delegates to workspace.export().
-
 Classes:
     ModelExporter: Abstract base class for implementing custom exporters.
         Subclasses implement export_to_directory() to write files.
@@ -32,17 +29,12 @@ Example:
     >>> workspace = DataWorkspace("./my_workspace")
     >>> ir = workspace.load("my_dataset")
     >>>
-    >>> # Export using workspace (recommended)
     >>> exporter = STAEformerExporter()
     >>> result = exporter.export(
-    ...     workspace,
     ...     ir,
     ...     window_config=WindowConfig(input_length=12, horizon=12)
     ... )
     >>> print(result.files)
-    >>>
-    >>> # Or use the convenience method if IR is already linked to workspace
-    >>> result = exporter.export_from_workspace(ir)
 """
 
 from gnn_benchmark.exporters.base import ModelExporter, WindowConfig, SplitConfig, ExportResult

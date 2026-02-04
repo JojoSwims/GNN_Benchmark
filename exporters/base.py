@@ -9,7 +9,6 @@ import numpy as np
 
 if TYPE_CHECKING:
     from gnn_benchmark.core.intermediate import IntermediateRepresentation
-    from gnn_benchmark.core.workspace import DataWorkspace
 
 
 @dataclass
@@ -87,9 +86,8 @@ class ModelExporter(ABC):
     Exporters convert an IntermediateRepresentation to model-specific formats,
     handling windowing, splitting, and file format conversion.
 
-    This class follows a similar pattern to DatasetLoader: the primary entry
-    point is the `export()` method which takes a workspace and delegates to
-    `workspace.export()`.
+    The primary entry point is the `export()` method which takes an IR linked
+    to a workspace and delegates to `workspace.export()`.
 
     Subclasses must implement:
         - name: Property returning the exporter/model name (used for directories).
@@ -97,8 +95,8 @@ class ModelExporter(ABC):
 
     Example:
         >>> exporter = STAEformerExporter()
+        >>> ir = workspace.load("my_dataset")
         >>> result = exporter.export(
-        ...     workspace,
         ...     ir,
         ...     window_config=WindowConfig(input_length=12, horizon=12),
         ... )
@@ -140,46 +138,12 @@ class ModelExporter(ABC):
 
     def export(
         self,
-        workspace: "DataWorkspace",
         ir: "IntermediateRepresentation",
         window_config: WindowConfig | None = None,
         split_config: SplitConfig | None = None,
     ) -> ExportResult:
         """
-        Export IR using a workspace.
-
-        This is the primary entry point for exporting, following the same pattern
-        as DatasetLoader.prepare(). It delegates to workspace.export().
-
-        Output goes to: workspace/exports/{dataset_name}/{exporter_name}/
-
-        Args:
-            workspace: DataWorkspace to use for export.
-            ir: IntermediateRepresentation to export.
-            window_config: Window configuration. Uses defaults if None.
-            split_config: Split configuration. Uses defaults if None.
-
-        Returns:
-            ExportResult with paths to created files.
-        """
-        return workspace.export(
-            self,
-            ir,
-            window_config=window_config,
-            split_config=split_config,
-        )
-
-    def export_from_workspace(
-        self,
-        ir: "IntermediateRepresentation",
-        window_config: WindowConfig | None = None,
-        split_config: SplitConfig | None = None,
-    ) -> ExportResult:
-        """
-        Export using workspace linked to the IR.
-
-        This is a convenience method when the IR is already linked to a workspace.
-        For new code, prefer using `export(workspace, ir, ...)` directly.
+        Export IR to model-specific format.
 
         Output goes to: workspace/exports/{dataset_name}/{exporter_name}/
 
@@ -195,10 +159,10 @@ class ModelExporter(ABC):
             ValueError: If IR is not linked to a workspace.
         """
         if ir.workspace is None or ir.dataset_name is None:
-            raise ValueError("IR must be linked to workspace for this method")
+            raise ValueError("IR must be linked to a workspace")
 
-        return self.export(
-            ir.workspace,
+        return ir.workspace.export(
+            self,
             ir,
             window_config=window_config,
             split_config=split_config,
