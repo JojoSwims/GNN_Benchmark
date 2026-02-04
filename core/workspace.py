@@ -8,6 +8,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gnn_benchmark.datasets.base import DatasetLoader
+    from gnn_benchmark.exporters.base import (
+        ExportResult,
+        ModelExporter,
+        SplitConfig,
+        WindowConfig,
+    )
 
 from gnn_benchmark.core.intermediate import IntermediateRepresentation
 
@@ -277,6 +283,50 @@ class DataWorkspace:
 
         if export_path.exists():
             shutil.rmtree(export_path)
+
+    # --- Export ---
+
+    def export(
+        self,
+        exporter: "ModelExporter",
+        ir: IntermediateRepresentation,
+        window_config: "WindowConfig | None" = None,
+        split_config: "SplitConfig | None" = None,
+    ) -> "ExportResult":
+        """
+        Export an IR using the given exporter.
+
+        This method follows the same pattern as prepare() for dataset loaders.
+        The exporter writes files to: workspace/exports/{dataset_name}/{exporter_name}/
+
+        Args:
+            exporter: ModelExporter instance to use for export.
+            ir: IntermediateRepresentation to export.
+            window_config: Window configuration. Uses exporter defaults if None.
+            split_config: Split configuration. Uses exporter defaults if None.
+
+        Returns:
+            ExportResult with paths to created files and metadata.
+
+        Raises:
+            ValueError: If IR has no dataset name.
+        """
+        # Import here to avoid circular imports
+        from gnn_benchmark.exporters.base import SplitConfig, WindowConfig
+
+        dataset_name = ir.dataset_name or ir.metadata.name
+        if not dataset_name:
+            raise ValueError("IR must have a dataset name for export")
+
+        # Determine output directory
+        output_dir = self.exports_dir / dataset_name / exporter.name
+
+        # Use defaults if not provided
+        window_cfg = window_config or WindowConfig()
+        split_cfg = split_config or SplitConfig()
+
+        # Delegate to exporter's implementation
+        return exporter.export_to_directory(ir, output_dir, window_cfg, split_cfg)
 
     def __repr__(self) -> str:
         datasets = self.list_datasets()

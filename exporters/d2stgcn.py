@@ -28,7 +28,7 @@ class D2STGCNExporter(ModelExporter):
     def name(self) -> str:
         return "d2stgcn"
 
-    def export(
+    def export_to_directory(
         self,
         ir: IntermediateRepresentation,
         output_dir: Path,

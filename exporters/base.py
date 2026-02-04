@@ -9,26 +9,44 @@ import numpy as np
 
 if TYPE_CHECKING:
     from gnn_benchmark.core.intermediate import IntermediateRepresentation
+    from gnn_benchmark.core.workspace import DataWorkspace
 
 
 @dataclass
 class WindowConfig:
-    """Configuration for sliding window creation."""
+    """
+    Configuration for sliding window creation.
 
-    input_length: int = 12  # L: number of past timesteps
-    horizon: int = 12  # H: number of future timesteps to predict
-    y_start: int = 1  # Gap between input end and target start
-    input_columns: list[str] | None = None  # None = all feature columns
-    target_columns: list[str] | None = None  # None = same as input_columns
+    Attributes:
+        input_length: Number of past timesteps (L) to use as input.
+        horizon: Number of future timesteps (H) to predict.
+        y_start: Gap between input end and target start. Default is 1,
+            meaning target starts immediately after input.
+        input_columns: Feature columns to use for input. None means all columns.
+        target_columns: Feature columns to predict. None means same as input_columns.
+    """
+
+    input_length: int = 12
+    horizon: int = 12
+    y_start: int = 1
+    input_columns: list[str] | None = None
+    target_columns: list[str] | None = None
 
 
 @dataclass
 class SplitConfig:
-    """Configuration for train/val/test split."""
+    """
+    Configuration for temporal train/val/test split.
+
+    The test ratio is computed as 1 - train_ratio - val_ratio.
+
+    Attributes:
+        train_ratio: Fraction of data for training (e.g., 0.7 for 70%).
+        val_ratio: Fraction of data for validation (e.g., 0.1 for 10%).
+    """
 
     train_ratio: float = 0.7
     val_ratio: float = 0.1
-    # test_ratio is implicit: 1 - train_ratio - val_ratio
 
     def __post_init__(self):
         if self.train_ratio + self.val_ratio >= 1.0:
@@ -38,39 +56,66 @@ class SplitConfig:
 
     @property
     def test_ratio(self) -> float:
+        """Compute the test ratio as the remainder."""
         return 1.0 - self.train_ratio - self.val_ratio
 
 
 @dataclass
 class ExportResult:
-    """Result of an export operation."""
+    """
+    Result of an export operation.
 
-    files: dict[str, Path]  # name -> path mapping
+    Attributes:
+        files: Mapping of file names to their paths.
+        window_config: The window configuration used.
+        split_config: The split configuration used.
+        stats: Optional statistics (e.g., normalization parameters).
+        metadata: Additional metadata about the export.
+    """
+
+    files: dict[str, Path]
     window_config: WindowConfig
     split_config: SplitConfig
-    stats: dict[str, Any] | None = None  # Optional: normalization stats, etc.
+    stats: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ModelExporter(ABC):
     """
-    Base class for model-specific exporters.
+    Abstract base class for model-specific exporters.
 
-    Handles windowing, splitting, and format conversion from IR to
-    model-specific formats.
+    Exporters convert an IntermediateRepresentation to model-specific formats,
+    handling windowing, splitting, and file format conversion.
+
+    This class follows a similar pattern to DatasetLoader: the primary entry
+    point is the `export()` method which takes a workspace and delegates to
+    `workspace.export()`.
 
     Subclasses must implement:
-        - name: Property returning the exporter/model name
-        - export: Method to export IR to model-specific format
+        - name: Property returning the exporter/model name (used for directories).
+        - export_to_directory: Method to write files to a specific directory.
+
+    Example:
+        >>> exporter = STAEformerExporter()
+        >>> result = exporter.export(
+        ...     workspace,
+        ...     ir,
+        ...     window_config=WindowConfig(input_length=12, horizon=12),
+        ... )
+        >>> print(result.files)
     """
 
     @property
     @abstractmethod
     def name(self) -> str:
-        """Exporter/model name (used for directory naming)."""
+        """
+        Exporter/model name.
+
+        Used for naming the export subdirectory under workspace/exports/{dataset}/.
+        """
 
     @abstractmethod
-    def export(
+    def export_to_directory(
         self,
         ir: "IntermediateRepresentation",
         output_dir: Path,
@@ -78,17 +123,51 @@ class ModelExporter(ABC):
         split_config: SplitConfig,
     ) -> ExportResult:
         """
-        Export IR to model-specific format.
+        Export IR to model-specific format in the given directory.
+
+        This is the method subclasses must implement. It performs the actual
+        conversion and file writing.
 
         Args:
-            ir: The intermediate representation
-            output_dir: Where to write output files
-            window_config: Sliding window parameters
-            split_config: Train/val/test split ratios
+            ir: The intermediate representation to export.
+            output_dir: Directory where output files should be written.
+            window_config: Sliding window parameters.
+            split_config: Train/val/test split ratios.
 
         Returns:
-            ExportResult with paths to created files
+            ExportResult with paths to created files and metadata.
         """
+
+    def export(
+        self,
+        workspace: "DataWorkspace",
+        ir: "IntermediateRepresentation",
+        window_config: WindowConfig | None = None,
+        split_config: SplitConfig | None = None,
+    ) -> ExportResult:
+        """
+        Export IR using a workspace.
+
+        This is the primary entry point for exporting, following the same pattern
+        as DatasetLoader.prepare(). It delegates to workspace.export().
+
+        Output goes to: workspace/exports/{dataset_name}/{exporter_name}/
+
+        Args:
+            workspace: DataWorkspace to use for export.
+            ir: IntermediateRepresentation to export.
+            window_config: Window configuration. Uses defaults if None.
+            split_config: Split configuration. Uses defaults if None.
+
+        Returns:
+            ExportResult with paths to created files.
+        """
+        return workspace.export(
+            self,
+            ir,
+            window_config=window_config,
+            split_config=split_config,
+        )
 
     def export_from_workspace(
         self,
@@ -97,30 +176,32 @@ class ModelExporter(ABC):
         split_config: SplitConfig | None = None,
     ) -> ExportResult:
         """
-        Export using workspace's export directory structure.
+        Export using workspace linked to the IR.
+
+        This is a convenience method when the IR is already linked to a workspace.
+        For new code, prefer using `export(workspace, ir, ...)` directly.
 
         Output goes to: workspace/exports/{dataset_name}/{exporter_name}/
 
         Args:
-            ir: IntermediateRepresentation linked to a workspace
-            window_config: Window configuration (uses defaults if None)
-            split_config: Split configuration (uses defaults if None)
+            ir: IntermediateRepresentation linked to a workspace.
+            window_config: Window configuration. Uses defaults if None.
+            split_config: Split configuration. Uses defaults if None.
 
         Returns:
-            ExportResult with paths to created files
+            ExportResult with paths to created files.
 
         Raises:
-            ValueError: If IR is not linked to a workspace
+            ValueError: If IR is not linked to a workspace.
         """
         if ir.workspace is None or ir.dataset_name is None:
             raise ValueError("IR must be linked to workspace for this method")
 
-        output_dir = ir.workspace.exports_dir / ir.dataset_name / self.name
         return self.export(
+            ir.workspace,
             ir,
-            output_dir,
-            window_config or WindowConfig(),
-            split_config or SplitConfig(),
+            window_config=window_config,
+            split_config=split_config,
         )
 
     # --- Helper methods for subclasses ---

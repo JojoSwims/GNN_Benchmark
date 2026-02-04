@@ -30,7 +30,7 @@ class STAEformerExporter(ModelExporter):
     def name(self) -> str:
         return "staeformer"
 
-    def export(
+    def export_to_directory(
         self,
         ir: IntermediateRepresentation,
         output_dir: Path,

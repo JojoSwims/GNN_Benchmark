@@ -29,7 +29,7 @@ class ASTGCNExporter(ModelExporter):
     def name(self) -> str:
         return "astgcn"
 
-    def export(
+    def export_to_directory(
         self,
         ir: IntermediateRepresentation,
         output_dir: Path,
