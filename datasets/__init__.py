@@ -29,6 +29,15 @@ Classes:
     ElergoneLoader: Electricity Load Diagrams dataset (370 clients, 15-min).
         No graph structure provided.
 
+    NYISOLoader: NYISO Integrated Load dataset (11 regions, hourly).
+        No graph structure provided.
+
+    NYCovidLoader: NYT COVID-19 county-level dataset (2000+ counties, daily).
+        Haversine distance graph.
+
+    MelPedsLoader: Melbourne Pedestrian Counts dataset (55 sensors, hourly).
+        Haversine distance graph.
+
 Example:
     >>> from gnn_benchmark import DataWorkspace
     >>> from gnn_benchmark.datasets import BeijingAirLoader, Cluster1AirLoader
@@ -45,6 +54,9 @@ from gnn_benchmark.datasets.beijing_air import (
     Cluster2AirLoader,
 )
 from gnn_benchmark.datasets.elergone import ElergoneLoader
+from gnn_benchmark.datasets.iso import NYISOLoader
+from gnn_benchmark.datasets.melpeds import MelPedsLoader
+from gnn_benchmark.datasets.ny_covid import NYCovidLoader
 from gnn_benchmark.datasets.pems_speed import PEMSBayLoader, MetroLALoader
 from gnn_benchmark.datasets.pems_volume import PEMS04Loader, PEMS08Loader
 
@@ -54,6 +66,9 @@ __all__ = [
     "Cluster1AirLoader",
     "Cluster2AirLoader",
     "ElergoneLoader",
+    "NYISOLoader",
+    "NYCovidLoader",
+    "MelPedsLoader",
     "PEMSBayLoader",
     "MetroLALoader",
     "PEMS04Loader",

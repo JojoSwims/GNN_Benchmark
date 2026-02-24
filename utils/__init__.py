@@ -13,6 +13,7 @@ Evaluation metrics (all support optional boolean mask):
     r2_score: R-squared coefficient of determination
 
 Graph utilities:
+    haversine_distance: Great-circle distance between two coordinates (meters).
     adjacency_from_edges: Convert edges DataFrame to adjacency matrix.
     normalize_adjacency: Symmetric normalization D^(-1/2) A D^(-1/2).
     random_walk_matrix: Random walk normalization D^(-1) A.
@@ -39,6 +40,7 @@ Example:
 
 from gnn_benchmark.utils.metrics import mae, rmse, mape, mse, smape, r2_score
 from gnn_benchmark.utils.graph import (
+    haversine_distance,
     adjacency_from_edges,
     normalize_adjacency,
     random_walk_matrix,
@@ -70,6 +72,7 @@ __all__ = [
     "smape",
     "r2_score",
     # Graph utilities
+    "haversine_distance",
     "adjacency_from_edges",
     "normalize_adjacency",
     "random_walk_matrix",

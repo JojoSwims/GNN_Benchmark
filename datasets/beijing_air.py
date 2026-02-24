@@ -9,13 +9,13 @@ import urllib.request
 import zipfile
 from abc import abstractmethod
 from dataclasses import dataclass
-from math import asin, cos, radians, sin, sqrt
 from pathlib import Path
 
 import pandas as pd
 
 from gnn_benchmark.core.types import DatasetInfo
 from gnn_benchmark.datasets.base import DatasetLoader
+from gnn_benchmark.utils.graph import haversine_distance
 
 # Node orders for different subdivisions
 BEIJING_NODE_ORDER = [
@@ -81,24 +81,6 @@ CLUSTER2_NODE_ORDER = [
 ]
 
 URL = "https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/Data-1.zip"
-
-
-def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """
-    Calculate great-circle distance between two coordinates.
-
-    Returns distance in meters.
-    """
-    R = 6371008.8  # Mean Earth radius in meters
-
-    phi1, lambda1, phi2, lambda2 = map(radians, (lat1, lon1, lat2, lon2))
-
-    dphi = phi2 - phi1
-    dlambda = lambda2 - lambda1
-    a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
-    c = 2 * asin(sqrt(a))
-
-    return R * c
 
 
 class _BaseAirQualityLoader(DatasetLoader):
@@ -238,7 +220,7 @@ class _BaseAirQualityLoader(DatasetLoader):
             for j, row_j in stations.iterrows():
                 if row_i["station_id"] == row_j["station_id"]:
                     continue
-                d = _haversine_distance(
+                d = haversine_distance(
                     row_i["latitude"],
                     row_i["longitude"],
                     row_j["latitude"],
