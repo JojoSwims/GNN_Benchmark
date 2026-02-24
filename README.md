@@ -153,6 +153,9 @@ print(ir.metadata.transform_history)
 | PEMS04 | 307 | Flow, Occupancy, Speed | 5 min | CalTrans |
 | PEMS08 | 170 | Flow, Occupancy, Speed | 5 min | CalTrans |
 | Elergone | 370 | Power | 15 min | UCI ML Repository |
+| NYISO Integrated Load | 11 | Load | 1 hour | NYISO |
+| Melbourne Pedestrian Counts | 55 | Count | 1 hour | UCTB Urban Dataset |
+| NYT COVID-19 (US Counties) | 3,000+ | Cases, Deaths | 1 day | The New York Times |
 
 ### Loading Datasets
 
@@ -164,6 +167,9 @@ from gnn_benchmark.datasets import (
     PEMS04Loader,
     PEMS08Loader,
     ElergoneLoader,
+    NYISOLoader,
+    MelPedsLoader,
+    NYCovidLoader,
 )
 
 # Example: Load Beijing Air with different subdivisions
