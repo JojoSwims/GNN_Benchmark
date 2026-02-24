@@ -6,4 +6,4 @@ list_of_models.txt
 /models_prep/testingnpz.py
 /models_prep/testingtxt.py
 /models_prep/testingpickle.py
-/__pycache__/
+*/__pycache__/
