@@ -44,6 +44,11 @@ from gnn_benchmark.exporters.astgcn import ASTGCNExporter
 from gnn_benchmark.exporters.mtgnn import MTGNNExporter
 from gnn_benchmark.exporters.gts import GTSExporter
 from gnn_benchmark.exporters.d2stgcn import D2STGCNExporter
+from gnn_benchmark.exporters.dataloader import (
+    create_sliding_windows,
+    split_by_time,
+    make_dataloaders,
+)
 
 __all__ = [
     "ModelExporter",
@@ -56,4 +61,7 @@ __all__ = [
     "MTGNNExporter",
     "GTSExporter",
     "D2STGCNExporter",
+    "create_sliding_windows",
+    "split_by_time",
+    "make_dataloaders",
 ]

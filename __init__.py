@@ -47,6 +47,7 @@ from gnn_benchmark import transforms
 from gnn_benchmark import exporters
 from gnn_benchmark import baselines
 from gnn_benchmark import utils
+from gnn_benchmark import models
 
 __all__ = [
     # Version
@@ -62,4 +63,5 @@ __all__ = [
     "exporters",
     "baselines",
     "utils",
+    "models",
 ]
