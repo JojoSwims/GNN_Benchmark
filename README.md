@@ -239,6 +239,154 @@ print(f"Per-horizon metrics: {result.per_horizon_metrics}")
 | HistoricalAverage | Predicts average from same period in history |
 | SARIMA | Seasonal ARIMA with optional Kalman imputation |
 
+## Model Submission Contract
+
+To benchmark a custom GNN model, subclass `BenchmarkModel` and implement
+`fit` and `predict`.
+
+```python
+from gnn_benchmark.models import BenchmarkModel, TrainingHistory
+
+class MyGNN(BenchmarkModel):
+    name = "MyGNN"
+
+    def fit(self, train_loader, val_loader, adj, config):
+        """
+        Train the model.
+
+        Args:
+            train_loader: DataLoader yielding (x_batch, y_batch) with
+                          x_batch [B, seq_in_len, N, D_in] float32
+                          y_batch [B, seq_out_len, N, D_out] float32
+            val_loader:   Same format, shuffle=False.
+            adj:          Adjacency matrix [N, N] float32, or None if the
+                          dataset has no edge information.
+            config:       Any config object you choose (dataclass, dict, …).
+        """
+        # ... train your model ...
+        return TrainingHistory(train_loss=[...], val_loss=[...])  # or None
+
+    def predict(self, test_loader, adj, config):
+        """
+        Generate predictions.
+
+        Returns:
+            np.ndarray of shape [num_test_samples, seq_out_len, N, D_out]
+            in the same normalised space as the training targets.
+        """
+        # ... run inference ...
+        return y_pred
+
+    def get_config(self) -> dict:
+        """Optional: expose hyperparameters for result logging."""
+        return {"hidden_dim": 64, "layers": 3}
+```
+
+### Contract rules
+
+| Rule | Detail |
+|------|--------|
+| **DataLoader format** | Loaders yield `(x_batch, y_batch)` float32 tensors |
+| **Test order** | `test_loader` is always `shuffle=False` — row order matches ground truth |
+| **Adjacency** | `adj` is `None` for datasets with no graph; raise `ValueError` if you require it |
+| **Normalisation** | Inputs and targets are Z-score normalised; return `y_pred` in the same space |
+| **Config** | Fully submitter-controlled — pass whatever your model needs |
+
+### Building DataLoaders manually
+
+```python
+from gnn_benchmark.exporters import create_sliding_windows, split_by_time, make_dataloaders
+from gnn_benchmark.exporters import WindowConfig, SplitConfig
+
+data = ir.to_tensor()                            # (T, N, C)
+x, y = create_sliding_windows(data, input_length=12, horizon=12)
+x_train, x_val, x_test = split_by_time(x, 0.7, 0.1)
+y_train, y_val, y_test = split_by_time(y, 0.7, 0.1)
+
+train_loader, val_loader, test_loader = make_dataloaders(
+    x_train, y_train, x_val, y_val, x_test, y_test, batch_size=32
+)
+```
+
+---
+
+## Running the Benchmark
+
+`BenchmarkRunner` drives the full pipeline — download, preprocess, window,
+fit, predict, and score — for every dataset you specify.
+
+```python
+from benchmark import BenchmarkRunner
+from gnn_benchmark.exporters import WindowConfig, SplitConfig
+
+runner = BenchmarkRunner(
+    workspace_dir="./benchmark_workspace",
+    datasets=["metr-la", "pems-bay", "pems04"],  # None = all datasets
+    window_config=WindowConfig(input_length=12, horizon=12),
+    split_config=SplitConfig(train_ratio=0.7, val_ratio=0.1),
+    batch_size=32,
+)
+
+result = runner.run(MyGNN(), config=my_config)
+print(result.summary())
+```
+
+Sample output:
+
+```
+Model: MyGNN
+────────────────────────────────────────────────────────
+Dataset              MAE      RMSE     MAPE
+────────────────────────────────────────────────────────
+metr-la           0.4123   0.6814   9.21%
+pems-bay          0.3187   0.5241   7.83%
+pems04            0.5214   0.8427  11.40%
+────────────────────────────────────────────────────────
+Mean              0.4175   0.6827   9.48%
+────────────────────────────────────────────────────────
+(metrics in normalised space)
+```
+
+### Available datasets
+
+| Key | Dataset |
+|-----|---------|
+| `metr-la` | METR-LA (requires `gdown`) |
+| `pems-bay` | PEMS-BAY (requires `gdown`) |
+| `pems04` | PEMS04 |
+| `pems08` | PEMS08 |
+| `beijing-air` | Beijing Air Quality |
+| `elergone` | Elergone (no graph) |
+| `nyiso` | NYISO Integrated Load (no graph) |
+| `nyc-covid` | NYT COVID-19 US Counties |
+| `mel-peds` | Melbourne Pedestrian Counts |
+
+### Accessing detailed results
+
+```python
+# Per-dataset metrics
+r = result.dataset_results["metr-la"]
+print(r.mae, r.rmse, r.mape)
+
+# Per-horizon breakdown
+for step, metrics in r.per_horizon.items():
+    print(f"  step {step:2d}: MAE={metrics['mae']:.4f}")
+
+# Export to dict / JSON
+import json
+print(json.dumps(result.to_dict(), indent=2))
+```
+
+### Adding PyTorch
+
+The `make_dataloaders` helper and the benchmark runner require PyTorch:
+
+```bash
+pip install torch
+```
+
+---
+
 ## Utility Functions
 
 ### Evaluation Metrics

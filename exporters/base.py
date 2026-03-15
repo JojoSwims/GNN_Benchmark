@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from gnn_benchmark.exporters.dataloader import (
+    create_sliding_windows as _create_sliding_windows_fn,
+    split_by_time as _split_by_time_fn,
+)
+
 if TYPE_CHECKING:
     from gnn_benchmark.core.intermediate import IntermediateRepresentation
 
@@ -192,41 +197,7 @@ class ModelExporter(ABC):
             - y: Array of shape (S, H, N, C) - target windows
             S = number of valid samples
         """
-        T = data.shape[0]
-
-        # Ensure 3D
-        if data.ndim == 2:
-            data = data[:, :, np.newaxis]
-
-        # Calculate number of valid samples
-        # For each sample i, we need:
-        # - Input: data[i:i+L]
-        # - Target: data[i+L+y_start-1:i+L+y_start-1+H]
-        # Last valid i: i+L+y_start-1+H-1 < T => i < T - L - y_start - H + 2
-        num_samples = T - input_length - y_start - horizon + 2
-
-        if num_samples <= 0:
-            raise ValueError(
-                f"Not enough data for windowing. T={T}, L={input_length}, "
-                f"H={horizon}, y_start={y_start}"
-            )
-
-        x_list = []
-        y_list = []
-
-        for i in range(num_samples):
-            x_start = i
-            x_end = i + input_length
-            y_start_idx = x_end + y_start - 1
-            y_end_idx = y_start_idx + horizon
-
-            x_list.append(data[x_start:x_end])
-            y_list.append(data[y_start_idx:y_end_idx])
-
-        x = np.stack(x_list, axis=0)  # (S, L, N, C)
-        y = np.stack(y_list, axis=0)  # (S, H, N, C)
-
-        return x, y
+        return _create_sliding_windows_fn(data, input_length, horizon, y_start)
 
     def _split_by_time(
         self,
@@ -245,11 +216,7 @@ class ModelExporter(ABC):
         Returns:
             (train, val, test) arrays
         """
-        n = data.shape[0]
-        train_end = int(n * train_ratio)
-        val_end = int(n * (train_ratio + val_ratio))
-
-        return data[:train_end], data[train_end:val_end], data[val_end:]
+        return _split_by_time_fn(data, train_ratio, val_ratio)
 
     def _compute_offsets(
         self, input_length: int, horizon: int, y_start: int = 1
