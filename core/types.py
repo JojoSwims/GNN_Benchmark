@@ -10,7 +10,7 @@ class DatasetInfo:
 
     name: str
     url: str
-    frequency: str  # e.g., "1H", "5T", "15T"
+    frequency: str  # e.g., "1h", "5min", "15min"
     node_order: list[str]
     feature_columns: list[str]
     units: dict[str, str] = field(default_factory=dict)

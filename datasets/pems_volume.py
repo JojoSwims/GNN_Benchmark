@@ -34,7 +34,7 @@ class PEMS04Loader(DatasetLoader):
         return DatasetInfo(
             name="pems04",
             url=URL,
-            frequency="5T",
+            frequency="5min",
             node_order=[str(n) for n in PEMS04_NODE_ORDER],
             feature_columns=["flow", "occupancy", "speed"],
             units={"flow": "vehicles", "occupancy": "percent", "speed": "mph"},
@@ -157,7 +157,7 @@ class PEMS08Loader(DatasetLoader):
         return DatasetInfo(
             name="pems08",
             url=URL,
-            frequency="5T",
+            frequency="5min",
             node_order=[str(n) for n in PEMS08_NODE_ORDER],
             feature_columns=["flow", "occupancy", "speed"],
             units={"flow": "vehicles", "occupancy": "percent", "speed": "mph"},

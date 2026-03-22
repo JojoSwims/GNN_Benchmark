@@ -88,7 +88,7 @@ class ElergoneLoader(DatasetLoader):
         return DatasetInfo(
             name="elergone",
             url=URL,
-            frequency="15T",
+            frequency="15min",
             node_order=ELERGONE_NODE_ORDER,
             feature_columns=["value"],
             units={"value": "kWh"},

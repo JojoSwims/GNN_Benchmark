@@ -49,7 +49,7 @@ class NYISOLoader(DatasetLoader):
         return DatasetInfo(
             name="nyiso",
             url=BASE_URL,
-            frequency="1H",
+            frequency="1h",
             node_order=NYISO_NODE_ORDER,
             feature_columns=["load"],
             units={"load": "MW"},
@@ -127,7 +127,7 @@ class NYISOLoader(DatasetLoader):
         out = out.sort_values(["ts", "node_id"]).reset_index(drop=True)
 
         # Densify to full grid
-        full_ts = pd.date_range(out["ts"].min(), out["ts"].max(), freq="1H")
+        full_ts = pd.date_range(out["ts"].min(), out["ts"].max(), freq="1h")
         node_idx = pd.Index(NYISO_NODE_ORDER, dtype=str)
 
         grid = pd.MultiIndex.from_product(

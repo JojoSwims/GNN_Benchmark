@@ -111,7 +111,7 @@ class _BaseAirQualityLoader(DatasetLoader):
         return DatasetInfo(
             name=self._dataset_name,
             url=URL,
-            frequency="1H",
+            frequency="1h",
             node_order=[str(n) for n in self._node_order],
             feature_columns=["PM25_Concentration"],
             units={"PM25_Concentration": "ug/m3"},
@@ -187,7 +187,7 @@ class _BaseAirQualityLoader(DatasetLoader):
 
         # Densify to full grid
         ts_unique = pd.Index(sorted(df["ts"].dropna().unique()))
-        full_ts = pd.date_range(ts_unique[0], ts_unique[-1], freq="1H")
+        full_ts = pd.date_range(ts_unique[0], ts_unique[-1], freq="1h")
 
         enforced_order = self._node_order
         # Filter enforced_order to only include nodes that exist

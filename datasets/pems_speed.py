@@ -109,7 +109,7 @@ class PEMSBayLoader(DatasetLoader):
         return DatasetInfo(
             name="pems_bay",
             url=f"https://drive.google.com/uc?id={PEMS_BAY_GDRIVE_ID}",
-            frequency="5T",
+            frequency="5min",
             node_order=[str(n) for n in PEMS_BAY_NODE_ORDER],
             feature_columns=["value"],
             units={"value": "mph"},
@@ -219,7 +219,7 @@ class MetroLALoader(DatasetLoader):
         return DatasetInfo(
             name="metr_la",
             url=f"https://drive.google.com/uc?id={METRLA_GDRIVE_ID}",
-            frequency="5T",
+            frequency="5min",
             node_order=[str(n) for n in METRLA_NODE_ORDER],
             feature_columns=["value"],
             units={"value": "mph"},
