@@ -74,6 +74,8 @@ except ImportError:  # pragma: no cover
 from gnn_benchmark.core.workspace import DataWorkspace
 from gnn_benchmark.datasets import (
     BeijingAirLoader,
+    Cluster1AirLoader,
+    Cluster2AirLoader,
     ElergoneLoader,
     MetroLALoader,
     MelPedsLoader,
@@ -97,15 +99,17 @@ from gnn_benchmark.utils.metrics import mae, mape, rmse
 # ---------------------------------------------------------------------------
 
 DATASET_REGISTRY: dict[str, Any] = {
-    "metr-la":    MetroLALoader,
-    "pems-bay":   PEMSBayLoader,
-    "pems04":     PEMS04Loader,
-    "pems08":     PEMS08Loader,
-    "beijing-air": BeijingAirLoader,
-    "elergone":   ElergoneLoader,
-    "nyiso":      NYISOLoader,
-    "nyc-covid":  NYCovidLoader,
-    "mel-peds":   MelPedsLoader,
+    "metr-la":              MetroLALoader,
+    "pems-bay":             PEMSBayLoader,
+    "pems04":               PEMS04Loader,
+    "pems08":               PEMS08Loader,
+    "beijing-air":          BeijingAirLoader,
+    "beijing-air-cluster1": Cluster1AirLoader,
+    "beijing-air-cluster2": Cluster2AirLoader,
+    "elergone":             ElergoneLoader,
+    "nyiso":                NYISOLoader,
+    "nyc-covid":            NYCovidLoader,
+    "mel-peds":             MelPedsLoader,
 }
 
 
