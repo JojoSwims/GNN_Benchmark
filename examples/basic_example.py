@@ -14,15 +14,13 @@ Usage:
 import numpy as np
 
 from gnn_benchmark.benchmark import BenchmarkRunner
-from gnn_benchmark import WindowConfig, SplitConfig, LastValueModel
+from gnn_benchmark import LastValueModel
 
 # ── Run the built-in LastValueModel as a baseline ──────────────────────
 
 runner = BenchmarkRunner(
     workspace_dir="./benchmark_workspace",
     datasets=["elergone"],  # small dataset, no graph, fast to download
-    window_config=WindowConfig(input_length=12, horizon=12),
-    split_config=SplitConfig(train_ratio=0.7, val_ratio=0.1),
 )
 
 result = runner.run(LastValueModel())
@@ -43,7 +41,7 @@ print(result.summary())
 #         def name(self) -> str:
 #             return "MeanModel"
 #
-#         def fit(self, x_train, y_train, x_val, y_val, adj, config, norm_stats=None):
+#         def fit(self, x_train, y_train, x_val, y_val, adj, config):
 #             self._horizon = y_train.shape[1]
 #             return None  # no training needed
 #

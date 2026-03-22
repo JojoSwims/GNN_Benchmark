@@ -12,8 +12,8 @@ Example::
     class MyGNN(BenchmarkModel):
         name = "MyGNN"
 
-        def fit(self, x_train, y_train, x_val, y_val, adj, config, norm_stats=None):
-            # x_train: (S, L, N, D_in) torch.Tensor -- raw, unnormalised
+        def fit(self, x_train, y_train, x_val, y_val, adj, config):
+            # x_train: (S, L, N, D_in) torch.Tensor -- NaN = missing
             ...
             return TrainingHistory(train_loss=[...], val_loss=[...])
 

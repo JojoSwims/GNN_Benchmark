@@ -35,7 +35,6 @@ class LastValueModel(BenchmarkModel):
         y_val: Any,
         adj: np.ndarray | None,
         config: Any,
-        norm_stats: dict | None = None,
     ) -> TrainingHistory | None:
         """No-op: store horizon length inferred from training targets."""
         self._horizon = y_train.shape[1]
