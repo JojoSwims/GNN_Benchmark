@@ -7,3 +7,5 @@ list_of_models.txt
 /models_prep/testingtxt.py
 /models_prep/testingpickle.py
 __pycache__/
+*.egg-info/
+.eggs/
