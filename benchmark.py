@@ -7,7 +7,7 @@ Usage
 
     from benchmark import BenchmarkRunner
     from gnn_benchmark.models import BenchmarkModel, TrainingHistory
-    from gnn_benchmark.exporters import WindowConfig, SplitConfig
+    from gnn_benchmark.core.types import WindowConfig, SplitConfig
 
     class MyGNN(BenchmarkModel):
         name = "MyGNN"

@@ -2,14 +2,15 @@
 Pytest configuration for the GNN Benchmark test suite.
 
 The repo directory is named ``GNN_Benchmark`` but all source imports use the
-package name ``gnn_benchmark``.  A symlink at ``/home/user/gnn_benchmark``
-pointing to this directory makes the package importable; the parent directory
-is added to ``sys.path`` here so both ``benchmark.py`` and ``gnn_benchmark``
-are discoverable.
+package name ``gnn_benchmark``.  The package is made importable via
+``pyproject.toml`` which maps ``gnn_benchmark`` to the repo root.
 
-To set up the symlink (one-time, already in place in the dev environment)::
+One-time setup (install in editable mode)::
 
-    ln -sf /path/to/GNN_Benchmark /path/to/gnn_benchmark
+    pip install -e /path/to/GNN_Benchmark
+
+The repo root is also added to ``sys.path`` here so that ``benchmark.py``
+at the repo root is directly importable during tests.
 """
 
 import sys

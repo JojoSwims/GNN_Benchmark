@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gnn-benchmark"
+version = "0.1.0"
+dependencies = ["pandas", "numpy"]
+
+[tool.setuptools]
+packages = [
+    "gnn_benchmark",
+    "gnn_benchmark.core",
+    "gnn_benchmark.datasets",
+    "gnn_benchmark.models",
+    "gnn_benchmark.utils",
+]
+
+[tool.setuptools.package-dir]
+"gnn_benchmark" = "."

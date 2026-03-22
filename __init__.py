@@ -22,6 +22,9 @@ Example usage:
 
 __version__ = "0.1.0"
 
+# Runner
+from gnn_benchmark.benchmark import BenchmarkRunner
+
 # Core classes
 from gnn_benchmark.core.workspace import DataWorkspace
 from gnn_benchmark.core.intermediate import IntermediateRepresentation
@@ -38,6 +41,8 @@ from gnn_benchmark import models
 __all__ = [
     # Version
     "__version__",
+    # Runner
+    "BenchmarkRunner",
     # Core classes
     "DataWorkspace",
     "IntermediateRepresentation",
