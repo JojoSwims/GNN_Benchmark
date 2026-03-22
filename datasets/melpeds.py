@@ -45,7 +45,7 @@ class MelPedsLoader(DatasetLoader):
         return DatasetInfo(
             name="mel_peds",
             url=URL,
-            frequency="1H",
+            frequency="1h",
             node_order=MELPEDS_NODE_ORDER,
             feature_columns=["count"],
             units={"count": "pedestrians"},
