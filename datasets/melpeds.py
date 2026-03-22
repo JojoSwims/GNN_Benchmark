@@ -12,7 +12,7 @@ import pandas as pd
 
 from gnn_benchmark.core.types import DatasetInfo
 from gnn_benchmark.datasets.base import DatasetLoader
-from gnn_benchmark.utils.graph import haversine_distance
+from gnn_benchmark.utils.geo import haversine_distance
 
 URL = "https://github.com/uctb/Urban-Dataset/raw/main/Public_Datasets/Pedestrian/60_minutes/Pedestrian_Melbourne.zip"
 

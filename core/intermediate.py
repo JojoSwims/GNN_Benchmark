@@ -13,7 +13,6 @@ from gnn_benchmark.core.types import IRMetadata
 
 if TYPE_CHECKING:
     from gnn_benchmark.core.workspace import DataWorkspace
-    from gnn_benchmark.transforms.base import Transform
 
 
 class IntermediateRepresentation:
@@ -25,9 +24,8 @@ class IntermediateRepresentation:
 
     Attributes:
         series: DataFrame with columns [ts, node_id, feature1, feature2, ...]
-        metadata: IRMetadata with dataset information and transform history
+        metadata: IRMetadata with dataset information
         edges: Optional DataFrame with columns [src, dst, cost]
-        mask: Optional DataFrame with observation mask
     """
 
     def __init__(
@@ -35,14 +33,12 @@ class IntermediateRepresentation:
         series: pd.DataFrame,
         metadata: IRMetadata,
         edges: pd.DataFrame | None = None,
-        mask: pd.DataFrame | None = None,
         workspace: DataWorkspace | None = None,
         dataset_name: str | None = None,
     ):
         self.series = series
         self.metadata = metadata
         self.edges = edges
-        self.mask = mask
         self._workspace = workspace
         self._dataset_name = dataset_name
 
@@ -84,46 +80,6 @@ class IntermediateRepresentation:
     def dataset_name(self) -> str | None:
         """The dataset name in the workspace, if linked."""
         return self._dataset_name
-
-    # --- Transforms ---
-
-    def apply(self, transform: Transform) -> IntermediateRepresentation:
-        """
-        Apply a transform in-place and record in history.
-
-        Args:
-            transform: The transform to apply
-
-        Returns:
-            self for method chaining
-        """
-        transform(self)
-        self.metadata.transform_history.append(transform.description)
-        return self
-
-    def reset_transforms(self) -> IntermediateRepresentation:
-        """
-        Reset to clean state from workspace.
-
-        Reloads the clean version from workspace and replaces current data.
-
-        Returns:
-            self for method chaining
-
-        Raises:
-            ValueError: If not linked to a workspace
-        """
-        if not self._workspace or not self._dataset_name:
-            raise ValueError("Cannot reset: IR not linked to workspace")
-
-        clean = self._workspace.load(self._dataset_name, from_clean=True)
-        self.series = clean.series.copy()
-        self.edges = clean.edges.copy() if clean.edges is not None else None
-        self.mask = clean.mask.copy() if clean.mask is not None else None
-        self.metadata.transform_history = []
-        self.metadata.feature_columns = clean.metadata.feature_columns.copy()
-
-        return self
 
     # --- Conversion ---
 
@@ -189,32 +145,6 @@ class IntermediateRepresentation:
 
         return adj
 
-    def get_observation_mask(self) -> np.ndarray | None:
-        """
-        Get observation mask as (T, N) boolean array.
-
-        Returns:
-            Boolean array where True indicates observed values, or None if no mask
-        """
-        if self.mask is None:
-            return None
-
-        timestamps = self.timestamps
-        nodes = self.nodes
-        node_to_idx = {str(n): i for i, n in enumerate(nodes)}
-        ts_to_idx = {ts: i for i, ts in enumerate(timestamps)}
-
-        T, N = len(timestamps), len(nodes)
-        mask_arr = np.ones((T, N), dtype=bool)
-
-        for _, row in self.mask.iterrows():
-            t_idx = ts_to_idx.get(row["ts"])
-            n_idx = node_to_idx.get(str(row["node_id"]))
-            if t_idx is not None and n_idx is not None:
-                mask_arr[t_idx, n_idx] = bool(row["is_observed"])
-
-        return mask_arr
-
     # --- Splitting ---
 
     def get_split_timestamps(
@@ -274,10 +204,6 @@ class IntermediateRepresentation:
         if self.edges is not None:
             self.edges.to_csv(path / "edges.csv", index=False)
 
-        # Save mask if present
-        if self.mask is not None:
-            self.mask.to_csv(path / "mask.csv", index=False)
-
         # Save metadata
         with open(path / "metadata.json", "w") as f:
             json.dump(self.metadata.to_dict(), f, indent=2)
@@ -320,18 +246,10 @@ class IntermediateRepresentation:
             edges["src"] = edges["src"].astype(str)
             edges["dst"] = edges["dst"].astype(str)
 
-        # Load mask if present
-        mask = None
-        if (path / "mask.csv").exists():
-            mask = pd.read_csv(path / "mask.csv")
-            mask["ts"] = pd.to_datetime(mask["ts"])
-            mask["node_id"] = mask["node_id"].astype(str)
-
         return cls(
             series=series,
             metadata=metadata,
             edges=edges,
-            mask=mask,
             workspace=workspace,
             dataset_name=dataset_name,
         )
@@ -341,6 +259,5 @@ class IntermediateRepresentation:
         return (
             f"IntermediateRepresentation("
             f"name={self.metadata.name!r}, "
-            f"shape=(T={T}, N={N}, C={C}), "
-            f"transforms={len(self.metadata.transform_history)})"
+            f"shape=(T={T}, N={N}, C={C}))"
         )

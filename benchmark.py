@@ -83,8 +83,8 @@ from gnn_benchmark.datasets import (
     PEMS08Loader,
     PEMSBayLoader,
 )
-from gnn_benchmark.exporters import WindowConfig, SplitConfig
-from gnn_benchmark.exporters.dataloader import (
+from gnn_benchmark.core.types import WindowConfig, SplitConfig
+from gnn_benchmark.utils.data import (
     create_sliding_windows,
     split_by_time,
 )

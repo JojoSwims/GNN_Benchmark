@@ -11,7 +11,7 @@ import pandas as pd
 
 from gnn_benchmark.core.types import DatasetInfo
 from gnn_benchmark.datasets.base import DatasetLoader
-from gnn_benchmark.utils.graph import haversine_distance
+from gnn_benchmark.utils.geo import haversine_distance
 
 YEARS = [2020, 2021, 2022, 2023]
 
