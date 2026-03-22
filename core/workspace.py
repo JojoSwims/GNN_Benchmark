@@ -8,12 +8,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gnn_benchmark.datasets.base import DatasetLoader
-    from gnn_benchmark.exporters.base import (
-        ExportResult,
-        ModelExporter,
-        SplitConfig,
-        WindowConfig,
-    )
 
 from gnn_benchmark.core.intermediate import IntermediateRepresentation
 
@@ -28,17 +22,10 @@ class DataWorkspace:
     Directory structure:
         workspace/
         ├── clean/          # Clean IR after conversion (never modified)
-        ├── working/        # Current transformed state (mutable)
-        └── exports/        # Model-specific outputs
+        └── working/        # Current working state
     """
 
     def __init__(self, path: Path | str):
-        """
-        Initialize a workspace.
-
-        Args:
-            path: Path to workspace directory. Will be created if it doesn't exist.
-        """
         self.path = Path(path)
         self._ensure_structure()
 
@@ -47,7 +34,6 @@ class DataWorkspace:
         self.path.mkdir(parents=True, exist_ok=True)
         self.clean_dir.mkdir(exist_ok=True)
         self.working_dir.mkdir(exist_ok=True)
-        self.exports_dir.mkdir(exist_ok=True)
 
     # --- Directory accessors ---
 
@@ -58,21 +44,14 @@ class DataWorkspace:
 
     @property
     def working_dir(self) -> Path:
-        """Directory for working (transformed) intermediate representations."""
+        """Directory for working intermediate representations."""
         return self.path / "working"
-
-    @property
-    def exports_dir(self) -> Path:
-        """Directory for model-specific exports."""
-        return self.path / "exports"
 
     # --- Dataset management ---
 
     def is_downloaded(self, dataset_name: str) -> bool:
         """
         Check if a dataset has been downloaded and converted.
-
-        A dataset is considered downloaded if it has a clean IR.
 
         Args:
             dataset_name: Name of the dataset
@@ -82,32 +61,6 @@ class DataWorkspace:
         """
         clean_path = self.clean_dir / dataset_name
         return (clean_path / "series.csv").exists() and (clean_path / "metadata.json").exists()
-
-    def has_working(self, dataset_name: str) -> bool:
-        """
-        Check if a dataset has a working (transformed) version.
-
-        Args:
-            dataset_name: Name of the dataset
-
-        Returns:
-            True if working IR exists for this dataset
-        """
-        working_path = self.working_dir / dataset_name
-        return (working_path / "series.csv").exists()
-
-    def has_exports(self, dataset_name: str) -> bool:
-        """
-        Check if a dataset has any exports.
-
-        Args:
-            dataset_name: Name of the dataset
-
-        Returns:
-            True if exports directory exists and is non-empty
-        """
-        export_path = self.exports_dir / dataset_name
-        return export_path.exists() and any(export_path.iterdir())
 
     def list_datasets(self) -> list[str]:
         """
@@ -121,21 +74,6 @@ class DataWorkspace:
             if d.is_dir() and (d / "series.csv").exists():
                 datasets.append(d.name)
         return sorted(datasets)
-
-    def list_exports(self, dataset_name: str) -> list[str]:
-        """
-        List all exports for a dataset.
-
-        Args:
-            dataset_name: Name of the dataset
-
-        Returns:
-            List of exporter names (e.g., ["staeformer", "graph_wavenet"])
-        """
-        export_path = self.exports_dir / dataset_name
-        if not export_path.exists():
-            return []
-        return sorted([d.name for d in export_path.iterdir() if d.is_dir()])
 
     # --- Loading ---
 
@@ -214,7 +152,6 @@ class DataWorkspace:
                 feature_columns=loader.info.feature_columns,
                 units=loader.info.units,
                 source_url=loader.info.url,
-                transform_history=[],
             )
 
             # Create IR and save to clean
@@ -237,96 +174,6 @@ class DataWorkspace:
 
         # Load and return from working
         return self.load(dataset_name, from_clean=False)
-
-    def save_working(self, ir: IntermediateRepresentation) -> Path:
-        """
-        Save the current state of an IR to the working directory.
-
-        Args:
-            ir: IntermediateRepresentation to save
-
-        Returns:
-            Path where data was saved
-
-        Raises:
-            ValueError: If IR is not linked to this workspace
-        """
-        if ir.workspace is not self or ir.dataset_name is None:
-            raise ValueError("IR is not linked to this workspace")
-
-        return ir.save(self.working_dir / ir.dataset_name)
-
-    def clear_working(self, dataset_name: str) -> None:
-        """
-        Remove working state for a dataset, resetting to clean.
-
-        Args:
-            dataset_name: Name of the dataset
-        """
-        working_path = self.working_dir / dataset_name
-        if working_path.exists():
-            shutil.rmtree(working_path)
-
-    def clear_exports(self, dataset_name: str, exporter_name: str | None = None) -> None:
-        """
-        Remove exports for a dataset.
-
-        Args:
-            dataset_name: Name of the dataset
-            exporter_name: If provided, only clear exports for this exporter.
-                          If None, clear all exports for the dataset.
-        """
-        if exporter_name:
-            export_path = self.exports_dir / dataset_name / exporter_name
-        else:
-            export_path = self.exports_dir / dataset_name
-
-        if export_path.exists():
-            shutil.rmtree(export_path)
-
-    # --- Export ---
-
-    def export(
-        self,
-        exporter: "ModelExporter",
-        ir: IntermediateRepresentation,
-        window_config: "WindowConfig | None" = None,
-        split_config: "SplitConfig | None" = None,
-    ) -> "ExportResult":
-        """
-        Export an IR using the given exporter.
-
-        This method follows the same pattern as prepare() for dataset loaders.
-        The exporter writes files to: workspace/exports/{dataset_name}/{exporter_name}/
-
-        Args:
-            exporter: ModelExporter instance to use for export.
-            ir: IntermediateRepresentation to export.
-            window_config: Window configuration. Uses exporter defaults if None.
-            split_config: Split configuration. Uses exporter defaults if None.
-
-        Returns:
-            ExportResult with paths to created files and metadata.
-
-        Raises:
-            ValueError: If IR has no dataset name.
-        """
-        # Import here to avoid circular imports
-        from gnn_benchmark.exporters.base import SplitConfig, WindowConfig
-
-        dataset_name = ir.dataset_name or ir.metadata.name
-        if not dataset_name:
-            raise ValueError("IR must have a dataset name for export")
-
-        # Determine output directory
-        output_dir = self.exports_dir / dataset_name / exporter.name
-
-        # Use defaults if not provided
-        window_cfg = window_config or WindowConfig()
-        split_cfg = split_config or SplitConfig()
-
-        # Delegate to exporter's implementation
-        return exporter.export_to_directory(ir, output_dir, window_cfg, split_cfg)
 
     def __repr__(self) -> str:
         datasets = self.list_datasets()

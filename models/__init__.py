@@ -12,13 +12,13 @@ Example::
     class MyGNN(BenchmarkModel):
         name = "MyGNN"
 
-        def fit(self, train_loader, val_loader, adj, config):
-            # Train your model here
+        def fit(self, x_train, y_train, x_val, y_val, adj, config, norm_stats=None):
+            # x_train: (S, L, N, D_in) torch.Tensor -- raw, unnormalised
             ...
             return TrainingHistory(train_loss=[...], val_loss=[...])
 
-        def predict(self, test_loader, adj, config):
-            # Return np.ndarray of shape [num_test_samples, seq_out_len, N, D_out]
+        def predict(self, x_test, adj, config):
+            # Return np.ndarray of shape [S_test, seq_out_len, N, D_out]
             ...
 """
 
