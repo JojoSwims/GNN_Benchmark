@@ -23,8 +23,10 @@ Example::
 """
 
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
+from gnn_benchmark.models.last_value import LastValueModel
 
 __all__ = [
     "BenchmarkModel",
     "TrainingHistory",
+    "LastValueModel",
 ]
