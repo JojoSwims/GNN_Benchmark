@@ -374,8 +374,8 @@ class BenchmarkRunner:
                 "y_pred must be [num_test_samples, seq_out_len, N, D_out]."
             )
 
-        # 9. Metrics (original units; exclude positions where ground truth is NaN)
-        valid_mask = ~np.isnan(y_test)
+        # 9. Metrics (original units; exclude NaN in ground truth or predictions)
+        valid_mask = ~np.isnan(y_test) & ~np.isnan(y_pred)
         dataset_mae  = mae(y_test,  y_pred, mask=valid_mask)
         dataset_rmse = rmse(y_test, y_pred, mask=valid_mask)
         dataset_mape = mape(y_test, y_pred, mask=valid_mask)
@@ -388,7 +388,7 @@ class BenchmarkRunner:
             for h in range(horizon):
                 yt_h = y_test[:, h, :, :]
                 yp_h = y_pred[:, h, :, :]
-                mask_h = ~np.isnan(yt_h)
+                mask_h = ~np.isnan(yt_h) & ~np.isnan(yp_h)
                 per_horizon[h + 1] = {
                     "mae":  mae(yt_h,  yp_h, mask=mask_h),
                     "rmse": rmse(yt_h, yp_h, mask=mask_h),
