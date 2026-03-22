@@ -13,7 +13,7 @@ Usage:
 
 import numpy as np
 
-from benchmark import BenchmarkRunner
+from gnn_benchmark.benchmark import BenchmarkRunner
 from gnn_benchmark import WindowConfig, SplitConfig, LastValueModel
 
 # ── Run the built-in LastValueModel as a baseline ──────────────────────
