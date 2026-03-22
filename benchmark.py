@@ -7,13 +7,12 @@ Usage
 
     from benchmark import BenchmarkRunner
     from gnn_benchmark.models import BenchmarkModel, TrainingHistory
-    from gnn_benchmark.core.types import WindowConfig, SplitConfig
 
     class MyGNN(BenchmarkModel):
         name = "MyGNN"
 
-        def fit(self, x_train, y_train, x_val, y_val, adj, config, norm_stats=None):
-            # x_train: (S_train, L, N, D_in) torch.Tensor — unnormalised, NaN = missing
+        def fit(self, x_train, y_train, x_val, y_val, adj, config):
+            # x_train: (S_train, L, N, D_in) torch.Tensor — NaN = missing
             # Create your own DataLoader, normalise as you see fit:
             #   from torch.utils.data import DataLoader, TensorDataset
             #   loader = DataLoader(TensorDataset(x_train, y_train), batch_size=64)
@@ -27,7 +26,6 @@ Usage
     runner = BenchmarkRunner(
         workspace_dir="./benchmark_workspace",
         datasets=["metr-la", "pems-bay"],        # None = all datasets
-        window_config=WindowConfig(input_length=12, horizon=12),
     )
     result = runner.run(MyGNN(), config=my_config)
     print(result.summary())
@@ -35,24 +33,21 @@ Usage
 Pipeline (per dataset)
 ----------------------
 1.  Prepare IR  — download and cache via ``DataWorkspace``
-2.  Norm stats  — compute mean/std/min/max from training split (NaN excluded),
-                  without modifying the data
-3.  Window      — sliding windows → ``(x, y)`` arrays via ``create_sliding_windows``
-4.  Split       — temporal train / val / test via ``split_by_time``
-5.  Tensors     — convert to float32 ``torch.Tensor`` (NaN preserved for missing values)
-6.  Fit         — ``model.fit(x_train, y_train, x_val, y_val, adj, config, norm_stats)``
-7.  Predict     — ``model.predict(x_test, adj, config)``
-8.  Metrics     — MAE, RMSE, MAPE in original (unnormalised) units; NaN positions excluded
+2.  Window      — sliding windows → ``(x, y)`` arrays via ``create_sliding_windows``
+3.  Split       — temporal train / val / test via ``split_by_time``
+4.  Tensors     — convert to float32 ``torch.Tensor`` (NaN preserved for missing values)
+5.  Fit         — ``model.fit(x_train, y_train, x_val, y_val, adj, config)``
+6.  Predict     — ``model.predict(x_test, adj, config)``
+7.  Metrics     — MAE, RMSE, MAPE in original units; NaN positions excluded
 
 Notes
 -----
-- Normalisation is the model's responsibility.  ``norm_stats`` passed to
-  ``fit`` contains training-split statistics so the model can normalise if
-  it chooses to.
+- Normalisation is the model's responsibility.
 - Missing values are represented as ``float('nan')`` in the tensors — zeros
   are **not** used as sentinels.
 - ``adj`` is ``None`` for datasets that carry no edge information.
 - ``config`` is passed through unchanged; the runner does not inspect it.
+- Window and split configurations are fixed per dataset via ``DatasetInfo``.
 """
 
 from __future__ import annotations
@@ -63,7 +58,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
 
 try:
     import torch
@@ -85,7 +79,7 @@ from gnn_benchmark.datasets import (
     PEMS08Loader,
     PEMSBayLoader,
 )
-from gnn_benchmark.core.types import WindowConfig, SplitConfig
+from gnn_benchmark.core.types import WindowConfig, SplitConfig  # noqa: F401 (re-exported)
 from gnn_benchmark.utils.data import (
     create_sliding_windows,
     split_by_time,
@@ -221,13 +215,14 @@ class BenchmarkRunner:
     """
     Drives the full benchmark pipeline for one or more datasets.
 
+    Window and split configurations are fixed per dataset (defined in
+    ``DatasetInfo.window_config`` and ``DatasetInfo.split_config``).
+
     Args:
         workspace_dir: Directory used by ``DataWorkspace`` for caching.
                        Created automatically if it does not exist.
         datasets:      List of dataset keys from ``DATASET_REGISTRY`` to
                        benchmark against.  ``None`` runs all registered datasets.
-        window_config: Sliding window parameters (input length, horizon, …).
-        split_config:  Temporal train / val / test ratios.
         verbose:       Print progress messages when ``True``.
     """
 
@@ -235,13 +230,9 @@ class BenchmarkRunner:
         self,
         workspace_dir: str | Path = "./benchmark_workspace",
         datasets: list[str] | None = None,
-        window_config: WindowConfig | None = None,
-        split_config: SplitConfig | None = None,
         verbose: bool = True,
     ) -> None:
         self.workspace_dir = Path(workspace_dir)
-        self.window_config = window_config or WindowConfig()
-        self.split_config = split_config or SplitConfig()
         self.verbose = verbose
 
         if datasets is None:
@@ -267,12 +258,11 @@ class BenchmarkRunner:
 
         For each dataset the runner:
         1. Prepares the IR (download + cache).
-        2. Computes normalisation statistics from the training split (NaN excluded).
-        3. Creates sliding windows and temporal splits.
-        4. Converts splits to float32 torch.Tensor (NaN preserved for missing values).
-        5. Calls ``model.fit(x_train, y_train, x_val, y_val, adj, config, norm_stats)``.
-        6. Calls ``model.predict(x_test, adj, config)``.
-        7. Computes MAE, RMSE, MAPE in original units (NaN positions in y_test excluded).
+        2. Creates sliding windows and temporal splits.
+        3. Converts splits to float32 torch.Tensor (NaN preserved for missing values).
+        4. Calls ``model.fit(x_train, y_train, x_val, y_val, adj, config)``.
+        5. Calls ``model.predict(x_test, adj, config)``.
+        6. Computes MAE, RMSE, MAPE in original units (NaN positions in y_test excluded).
 
         Dataset failures are caught and recorded in ``DatasetResult.error``
         so that a single broken dataset does not abort the full run.
@@ -331,51 +321,47 @@ class BenchmarkRunner:
         model: BenchmarkModel,
         config: Any,
     ) -> DatasetResult:
-        wc = self.window_config
-        sc = self.split_config
-
         # 1. Prepare IR (raw data, NaN for missing values — no imputation applied)
         loader_cls = DATASET_REGISTRY[dataset_key]
         loader = loader_cls()
         self._log(f"[{dataset_key}] Preparing data …")
         ir = loader.prepare(workspace)
 
-        # 2. Compute normalisation statistics from training split (without modifying IR)
-        self._log(f"[{dataset_key}] Computing normalisation statistics …")
-        train_end, _ = ir.get_split_timestamps(sc.train_ratio, sc.val_ratio)
-        norm_stats = self._compute_norm_stats(ir, train_end, wc.input_columns)
+        # Window and split configs are fixed per dataset
+        wc = loader.info.window_config
+        sc = loader.info.split_config
 
-        # 3. Build tensor and select columns
+        # 2. Build tensor and select columns
         x_cols = wc.input_columns  # None → all features
         y_cols = wc.target_columns or x_cols
 
         x_data = ir.to_tensor(x_cols)  # (T, N, D_in)  — may contain NaN
         y_data = ir.to_tensor(y_cols)  # (T, N, D_out) — may contain NaN
 
-        # 4. Sliding windows
+        # 3. Sliding windows
         self._log(f"[{dataset_key}] Windowing …")
         x_all, _ = create_sliding_windows(x_data, wc.input_length, wc.horizon, wc.y_start)
         _, y_all = create_sliding_windows(y_data, wc.input_length, wc.horizon, wc.y_start)
 
-        # 5. Temporal split
+        # 4. Temporal split
         x_train, x_val, x_test = split_by_time(x_all, sc.train_ratio, sc.val_ratio)
         y_train, y_val, y_test = split_by_time(y_all, sc.train_ratio, sc.val_ratio)
 
-        # 6. Convert to float32 tensors (NaN values preserved in float32)
+        # 5. Convert to float32 tensors (NaN values preserved in float32)
         x_train_t = torch.from_numpy(x_train.astype(np.float32))
         y_train_t = torch.from_numpy(y_train.astype(np.float32))
         x_val_t   = torch.from_numpy(x_val.astype(np.float32))
         y_val_t   = torch.from_numpy(y_val.astype(np.float32))
         x_test_t  = torch.from_numpy(x_test.astype(np.float32))
 
-        # 7. Adjacency
+        # 6. Adjacency
         adj = ir.get_adjacency_matrix() if ir.edges is not None else None
 
-        # 8. Fit
+        # 7. Fit
         self._log(f"[{dataset_key}] Fitting model …")
-        model.fit(x_train_t, y_train_t, x_val_t, y_val_t, adj, config, norm_stats)
+        model.fit(x_train_t, y_train_t, x_val_t, y_val_t, adj, config)
 
-        # 9. Predict
+        # 8. Predict
         self._log(f"[{dataset_key}] Predicting …")
         y_pred = model.predict(x_test_t, adj, config)
         y_pred = np.asarray(y_pred)
@@ -388,13 +374,13 @@ class BenchmarkRunner:
                 "y_pred must be [num_test_samples, seq_out_len, N, D_out]."
             )
 
-        # 10. Metrics (original units; exclude positions where ground truth is NaN)
+        # 9. Metrics (original units; exclude positions where ground truth is NaN)
         valid_mask = ~np.isnan(y_test)
         dataset_mae  = mae(y_test,  y_pred, mask=valid_mask)
         dataset_rmse = rmse(y_test, y_pred, mask=valid_mask)
         dataset_mape = mape(y_test, y_pred, mask=valid_mask)
 
-        # 11. Per-horizon metrics
+        # 10. Per-horizon metrics
         horizon = wc.horizon
         per_horizon: dict[int, dict[str, float]] | None = None
         if horizon > 1:
@@ -416,43 +402,6 @@ class BenchmarkRunner:
             mape=dataset_mape,
             per_horizon=per_horizon,
         )
-
-    @staticmethod
-    def _compute_norm_stats(
-        ir: Any,
-        train_end: Any,
-        input_columns: list[str] | None,
-    ) -> dict | None:
-        """
-        Compute per-feature normalisation statistics from the training split.
-
-        NaN values are excluded from all computations.  The returned dict
-        can be passed directly to ``BenchmarkModel.fit`` as ``norm_stats``.
-
-        Returns ``None`` if the IR has no feature columns.
-        """
-        cols = input_columns or ir.feature_columns
-        if not cols:
-            return None
-
-        ts = pd.to_datetime(ir.series["ts"])
-        train_mask = ts <= pd.Timestamp(train_end)
-
-        means, stds, mins, maxs = [], [], [], []
-        for col in cols:
-            train_vals = ir.series.loc[train_mask, col].dropna()
-            means.append(float(train_vals.mean()))
-            stds.append(float(train_vals.std()))
-            mins.append(float(train_vals.min()))
-            maxs.append(float(train_vals.max()))
-
-        return {
-            "columns": cols,
-            "means": np.array(means, dtype=np.float32),
-            "stds":  np.array(stds,  dtype=np.float32),
-            "mins":  np.array(mins,  dtype=np.float32),
-            "maxs":  np.array(maxs,  dtype=np.float32),
-        }
 
     def _log(self, msg: str) -> None:
         if self.verbose:

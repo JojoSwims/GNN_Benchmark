@@ -26,13 +26,11 @@ pip install gdown       # Optional: for PEMS-BAY and METR-LA datasets
 
 ```python
 from benchmark import BenchmarkRunner
-from gnn_benchmark import WindowConfig, SplitConfig, LastValueModel
+from gnn_benchmark import LastValueModel
 
 runner = BenchmarkRunner(
     workspace_dir="./benchmark_workspace",
     datasets=["metr-la"],
-    window_config=WindowConfig(input_length=12, horizon=12),
-    split_config=SplitConfig(train_ratio=0.7, val_ratio=0.1),
 )
 
 result = runner.run(LastValueModel())
@@ -53,11 +51,10 @@ class MyGNN(BenchmarkModel):
     def name(self) -> str:
         return "MyGNN"
 
-    def fit(self, x_train, y_train, x_val, y_val, adj, config, norm_stats=None):
-        # x_train: [S, L, N, D_in] torch.Tensor — raw, unnormalised, NaN = missing
+    def fit(self, x_train, y_train, x_val, y_val, adj, config):
+        # x_train: [S, L, N, D_in] torch.Tensor — NaN = missing
         # y_train: [S, H, N, D_out] torch.Tensor
         # adj: [N, N] numpy array or None (no graph)
-        # norm_stats: dict with "means", "stds", "mins", "maxs" arrays, or None
         ...
         return None  # or TrainingHistory(train_loss=[...], val_loss=[...])
 
@@ -69,7 +66,7 @@ class MyGNN(BenchmarkModel):
 
 ### Key rules
 
-- Tensors are **raw and unnormalised** — normalisation is the model's responsibility
+- Normalisation is the model's responsibility
 - Missing values are `NaN`, not zero
 - `adj` is `None` for datasets without graph structure
 - `y_pred` must be in **original units** (metrics are computed against raw ground truth)
@@ -94,13 +91,12 @@ class MyGNN(BenchmarkModel):
 For each dataset, `BenchmarkRunner` executes:
 
 1. **Prepare** — download and cache via `DataWorkspace`
-2. **Norm stats** — compute mean/std/min/max from training split (NaN excluded)
-3. **Window** — sliding windows → `(x, y)` arrays
-4. **Split** — temporal train / val / test
-5. **Tensors** — convert to float32 `torch.Tensor` (NaN preserved)
-6. **Fit** — `model.fit(x_train, y_train, x_val, y_val, adj, config, norm_stats)`
-7. **Predict** — `model.predict(x_test, adj, config)`
-8. **Metrics** — MAE, RMSE, MAPE in original units; NaN positions excluded
+2. **Window** — sliding windows → `(x, y)` arrays (config fixed per dataset)
+3. **Split** — temporal train / val / test (config fixed per dataset)
+4. **Tensors** — convert to float32 `torch.Tensor` (NaN preserved)
+5. **Fit** — `model.fit(x_train, y_train, x_val, y_val, adj, config)`
+6. **Predict** — `model.predict(x_test, adj, config)`
+7. **Metrics** — MAE, RMSE, MAPE in original units; NaN positions excluded
 
 ## Dependencies
 

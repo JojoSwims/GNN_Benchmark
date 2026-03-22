@@ -9,12 +9,11 @@ This package provides a clean interface for:
 
 Example usage:
 
-    from gnn_benchmark import BenchmarkRunner, LastValueModel, WindowConfig
+    from gnn_benchmark import BenchmarkRunner, LastValueModel
 
     runner = BenchmarkRunner(
         workspace_dir="./benchmark_workspace",
         datasets=["metr-la"],
-        window_config=WindowConfig(input_length=12, horizon=12),
     )
     result = runner.run(LastValueModel())
     print(result.summary())

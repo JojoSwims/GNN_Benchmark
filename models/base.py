@@ -61,12 +61,7 @@ class BenchmarkModel(ABC):
     Normalisation
     -------------
     Normalisation is entirely the model's responsibility.  The harness
-    provides ``norm_stats`` (computed from the training split, NaN-excluded)
-    so the model can normalise *if* it chooses to::
-
-        x_norm = (x_train - norm_stats["means"]) / norm_stats["stds"]
-        # norm_stats["means"] and ["stds"] are shape (D_in,) numpy arrays
-        # that broadcast correctly against (S, L, N, D_in) tensors.
+    passes raw tensors — the model must handle any normalisation it needs.
 
     ``y_pred`` returned by ``predict`` **must be in the original
     (unnormalised) space** — the harness computes metrics directly against
@@ -101,30 +96,19 @@ class BenchmarkModel(ABC):
         y_val: "Tensor",
         adj: np.ndarray | None,
         config: Any,
-        norm_stats: dict | None = None,
     ) -> "TrainingHistory | None":
         """
         Train the model.
 
         Args:
             x_train:    Training inputs  ``[S_train, seq_in_len, N, D_in]``,
-                        unnormalised, NaN = missing.
+                        NaN = missing.
             y_train:    Training targets ``[S_train, seq_out_len, N, D_out]``,
-                        unnormalised, NaN = missing.
+                        NaN = missing.
             x_val:      Validation inputs  ``[S_val, seq_in_len, N, D_in]``.
             y_val:      Validation targets ``[S_val, seq_out_len, N, D_out]``.
             adj:        Adjacency matrix [N, N] or None.
             config:     Submitter-defined configuration object.
-            norm_stats: Normalisation statistics computed from the training
-                        split (NaN excluded).  Dict with keys:
-
-                        * ``"columns"`` — list of feature column names, len D_in
-                        * ``"means"``   — ``np.ndarray`` shape ``(D_in,)``
-                        * ``"stds"``    — ``np.ndarray`` shape ``(D_in,)``
-                        * ``"mins"``    — ``np.ndarray`` shape ``(D_in,)``
-                        * ``"maxs"``    — ``np.ndarray`` shape ``(D_in,)``
-
-                        ``None`` if the dataset has no feature columns.
 
         Returns:
             TrainingHistory if the model tracks per-epoch losses, else None.
