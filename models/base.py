@@ -7,9 +7,10 @@ from typing import Any
 import numpy as np
 
 try:
-    from torch.utils.data import DataLoader
+    import torch
+    Tensor = torch.Tensor
 except ImportError:  # pragma: no cover
-    DataLoader = Any  # type: ignore[misc,assignment]
+    Tensor = Any  # type: ignore[misc,assignment]
 
 
 @dataclass
@@ -34,19 +35,42 @@ class BenchmarkModel(ABC):
     (``BenchmarkRunner``) calls them in sequence for every dataset and
     collects the returned predictions for metric computation.
 
-    DataLoader contract
-    -------------------
-    Both loaders yield ``(x_batch, y_batch)`` 2-tuples of float32 tensors:
+    Tensor contract
+    ---------------
+    The harness passes **raw, unnormalised** tensors.  Missing values are
+    represented as ``float('nan')`` — do **not** assume zero means missing.
+
+    All tensors are ``torch.Tensor`` of dtype ``float32``:
 
     .. code-block::
 
-        x_batch : [B, seq_in_len,  N, D_in]
-        y_batch : [B, seq_out_len, N, D_out]
+        x_train / x_val / x_test : [S, seq_in_len,  N, D_in]   (may contain NaN)
+        y_train / y_val           : [S, seq_out_len, N, D_out]  (may contain NaN)
 
-    The ``test_loader`` passed to ``predict`` is always created with
-    ``shuffle=False`` by ``make_dataloaders``, which guarantees that
-    ``y_pred`` rows correspond one-to-one with the ground-truth ``y_test``
-    rows in the order they were windowed.
+    ``S`` is the number of sliding-window samples for that split.
+
+    Batching
+    --------
+    Tensors are passed **unbatched** (no DataLoader is created by the harness).
+    The model is free to create a DataLoader with whatever batch size and
+    sampling strategy it prefers, e.g.::
+
+        from torch.utils.data import DataLoader, TensorDataset
+        loader = DataLoader(TensorDataset(x_train, y_train), batch_size=64, shuffle=True)
+
+    Normalisation
+    -------------
+    Normalisation is entirely the model's responsibility.  The harness
+    provides ``norm_stats`` (computed from the training split, NaN-excluded)
+    so the model can normalise *if* it chooses to::
+
+        x_norm = (x_train - norm_stats["means"]) / norm_stats["stds"]
+        # norm_stats["means"] and ["stds"] are shape (D_in,) numpy arrays
+        # that broadcast correctly against (S, L, N, D_in) tensors.
+
+    ``y_pred`` returned by ``predict`` **must be in the original
+    (unnormalised) space** — the harness computes metrics directly against
+    the raw ground-truth values.
 
     Adjacency matrix
     ----------------
@@ -55,14 +79,6 @@ class BenchmarkModel(ABC):
     for datasets that carry no edge information.  A model that requires
     a graph should raise ``ValueError("adj is required")`` when called
     with ``adj=None``.
-
-    Normalisation contract
-    ----------------------
-    ``x`` and ``y`` arriving in the DataLoaders are already in the
-    normalised space produced by the preprocessing pipeline
-    (``ZScoreNormalize`` by default).  ``y_pred`` must be returned in
-    the **same normalised space**.  The harness handles denormalisation
-    before computing human-readable metrics.
 
     Config
     ------
@@ -79,19 +95,36 @@ class BenchmarkModel(ABC):
     @abstractmethod
     def fit(
         self,
-        train_loader: "DataLoader",
-        val_loader: "DataLoader",
+        x_train: "Tensor",
+        y_train: "Tensor",
+        x_val: "Tensor",
+        y_val: "Tensor",
         adj: np.ndarray | None,
         config: Any,
+        norm_stats: dict | None = None,
     ) -> "TrainingHistory | None":
         """
         Train the model.
 
         Args:
-            train_loader: DataLoader over training windows (shuffle=True).
-            val_loader:   DataLoader over validation windows (shuffle=False).
-            adj:          Adjacency matrix [N, N] or None.
-            config:       Submitter-defined configuration object.
+            x_train:    Training inputs  ``[S_train, seq_in_len, N, D_in]``,
+                        unnormalised, NaN = missing.
+            y_train:    Training targets ``[S_train, seq_out_len, N, D_out]``,
+                        unnormalised, NaN = missing.
+            x_val:      Validation inputs  ``[S_val, seq_in_len, N, D_in]``.
+            y_val:      Validation targets ``[S_val, seq_out_len, N, D_out]``.
+            adj:        Adjacency matrix [N, N] or None.
+            config:     Submitter-defined configuration object.
+            norm_stats: Normalisation statistics computed from the training
+                        split (NaN excluded).  Dict with keys:
+
+                        * ``"columns"`` — list of feature column names, len D_in
+                        * ``"means"``   — ``np.ndarray`` shape ``(D_in,)``
+                        * ``"stds"``    — ``np.ndarray`` shape ``(D_in,)``
+                        * ``"mins"``    — ``np.ndarray`` shape ``(D_in,)``
+                        * ``"maxs"``    — ``np.ndarray`` shape ``(D_in,)``
+
+                        ``None`` if the dataset has no feature columns.
 
         Returns:
             TrainingHistory if the model tracks per-epoch losses, else None.
@@ -100,7 +133,7 @@ class BenchmarkModel(ABC):
     @abstractmethod
     def predict(
         self,
-        test_loader: "DataLoader",
+        x_test: "Tensor",
         adj: np.ndarray | None,
         config: Any,
     ) -> np.ndarray:
@@ -108,13 +141,15 @@ class BenchmarkModel(ABC):
         Generate predictions for all test windows.
 
         Args:
-            test_loader: DataLoader over test windows (shuffle=False, order preserved).
-            adj:         Adjacency matrix [N, N] or None.
-            config:      Submitter-defined configuration object.
+            x_test: Test inputs ``[S_test, seq_in_len, N, D_in]``,
+                    unnormalised, NaN = missing.
+            adj:    Adjacency matrix [N, N] or None.
+            config: Submitter-defined configuration object.
 
         Returns:
-            y_pred : np.ndarray of shape [num_test_samples, seq_out_len, N, D_out]
-                     in the same normalised space as the training targets.
+            y_pred : np.ndarray of shape ``[S_test, seq_out_len, N, D_out]``
+                     in the **original (unnormalised) space**.  The harness
+                     computes metrics directly against the raw ground truth.
         """
 
     def get_config(self) -> dict:
