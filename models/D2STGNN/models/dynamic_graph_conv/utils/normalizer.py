@@ -1,7 +1,11 @@
 import torch
 import torch.nn as nn
 
-from utils.cal_adj import remove_nan_inf
+
+def _remove_nan_inf(tensor):
+    tensor = torch.where(torch.isnan(tensor), torch.zeros_like(tensor), tensor)
+    tensor = torch.where(torch.isinf(tensor), torch.zeros_like(tensor), tensor)
+    return tensor
 
 
 class Normalizer(nn.Module):
@@ -10,7 +14,7 @@ class Normalizer(nn.Module):
 
     def _norm(self, graph):
         degree  = torch.sum(graph, dim=2)
-        degree  = remove_nan_inf(1 / degree)
+        degree  = _remove_nan_inf(1 / degree)
         degree  = torch.diag_embed(degree)
         normed_graph = torch.bmm(degree, graph)
         return normed_graph
