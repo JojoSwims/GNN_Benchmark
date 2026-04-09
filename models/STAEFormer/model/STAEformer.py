@@ -1,6 +1,5 @@
-import torch.nn as nn
 import torch
-from torchinfo import summary
+import torch.nn as nn
 
 
 class AttentionLayer(nn.Module):
@@ -248,8 +247,3 @@ class STAEformer(nn.Module):
             )  # (batch_size, out_steps, num_nodes, output_dim)
 
         return out
-
-
-if __name__ == "__main__":
-    model = STAEformer(207, 12, 12)
-    summary(model, [64, 12, 207, 3])
