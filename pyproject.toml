@@ -15,7 +15,6 @@ packages = [
     "gnn_benchmark.models",
     "gnn_benchmark.models.STAEFormer",
     "gnn_benchmark.models.STAEFormer.model",
-    "gnn_benchmark.models.STAEFormer.lib",
     "gnn_benchmark.utils",
 ]
 
