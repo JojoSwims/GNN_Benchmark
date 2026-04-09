@@ -48,6 +48,7 @@ class D2STGNN(nn.Module):
         self._forecast_dim  = 256
         self._output_hidden = 512
         self._output_dim    = model_args['seq_length']
+        self._out_feat_dim  = model_args.get('output_dim', 1)
 
         self._num_nodes     = model_args['num_nodes']
         self._k_s           = model_args['k_s']
@@ -82,7 +83,7 @@ class D2STGNN(nn.Module):
 
         # output layer
         self.out_fc_1   = nn.Linear(self._forecast_dim, self._output_hidden)
-        self.out_fc_2   = nn.Linear(self._output_hidden, model_args['gap'])
+        self.out_fc_2   = nn.Linear(self._output_hidden, model_args['gap'] * self._out_feat_dim)
 
         self.reset_parameter()
 
@@ -153,6 +154,11 @@ class D2STGNN(nn.Module):
         
         # regression layer
         forecast    = self.out_fc_2(F.relu(self.out_fc_1(F.relu(forecast_hidden))))
-        forecast    = forecast.transpose(1,2).contiguous().view(forecast.shape[0], forecast.shape[2], -1)
+        # forecast: [B, seq_length/gap, N, gap * output_dim]
+        B, T, N, _ = forecast.shape
+        gap = self._model_args['gap']
+        forecast = forecast.view(B, T, N, gap, self._out_feat_dim)
+        # [B, T, N, gap, output_dim] -> [B, T, gap, N, output_dim] -> [B, seq_out, N, output_dim]
+        forecast = forecast.permute(0, 1, 3, 2, 4).contiguous().view(B, -1, N, self._out_feat_dim)
 
         return forecast

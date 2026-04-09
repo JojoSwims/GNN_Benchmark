@@ -3,9 +3,9 @@ import math
 import torch
 import torch.nn as nn
 
-from models.decouple.residual_decomp import ResidualDecomp
-from models.inherent_block.inh_model import RNNLayer, TransformerLayer
-from models.inherent_block.forecast import Forecast
+from ..decouple.residual_decomp import ResidualDecomp
+from .inh_model import RNNLayer, TransformerLayer
+from .forecast import Forecast
 
 
 class PositionalEncoding(nn.Module):

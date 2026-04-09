@@ -1,2 +1,1 @@
-from models.model import *
-from models.trainer import trainer
+from .model import D2STGNN
