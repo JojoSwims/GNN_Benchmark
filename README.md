@@ -39,6 +39,12 @@ print(result.summary())
 
 See [`examples/basic_example.py`](examples/basic_example.py) for a runnable example.
 
+Model-specific Beijing Air examples (including config overrides):
+- [`examples/beijing_air_gwn_example.py`](examples/beijing_air_gwn_example.py)
+- [`examples/beijing_air_mtgnn_example.py`](examples/beijing_air_mtgnn_example.py)
+- [`examples/beijing_air_staeformer_example.py`](examples/beijing_air_staeformer_example.py)
+- [`examples/beijing_air_d2stgnn_example.py`](examples/beijing_air_d2stgnn_example.py)
+
 ## Model Contract
 
 Subclass `BenchmarkModel` and implement `fit` and `predict`:

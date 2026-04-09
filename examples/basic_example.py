@@ -7,6 +7,12 @@ This script demonstrates the full GNN Benchmark workflow:
 2. Run a model (LastValueModel) through the benchmark
 3. Print the evaluation results
 
+For trainable model + config examples on Beijing Air, see:
+- examples/beijing_air_gwn_example.py
+- examples/beijing_air_mtgnn_example.py
+- examples/beijing_air_staeformer_example.py
+- examples/beijing_air_d2stgnn_example.py
+
 Usage:
     python examples/basic_example.py
 """
