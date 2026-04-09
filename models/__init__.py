@@ -23,6 +23,7 @@ Example::
 """
 
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
+from gnn_benchmark.models.gwn import GWNConfig, GWNModel
 from gnn_benchmark.models.last_value import LastValueModel
 from gnn_benchmark.models.staeformer import STAEFormerConfig, STAEFormerModel
 
@@ -32,4 +33,6 @@ __all__ = [
     "LastValueModel",
     "STAEFormerModel",
     "STAEFormerConfig",
+    "GWNModel",
+    "GWNConfig",
 ]
