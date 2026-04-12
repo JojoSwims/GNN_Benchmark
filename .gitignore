@@ -7,5 +7,38 @@ list_of_models.txt
 /models_prep/testingtxt.py
 /models_prep/testingpickle.py
 __pycache__/
+*.pyc
+*.pyo
+
+# Workspaces / cached outputs
+workspace_noaa_test/
+workspace*/
+datasets/noaa_buoy_data.parquet
+datasets/noaa_buoy_data.csv
+
+# Build artifacts
+gnn_benchmark.egg-info/
 *.egg-info/
 .eggs/
+dist/
+build/
+
+# Exploration / debug scripts (not part of the benchmark)
+explore_all_buoys.py
+debug_buoy_filtering.py
+probe_buoy_availability.py
+plot_buoys.py
+plot_stations.py
+compare_feature_filters.py
+
+# Generated plots
+*.png
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
+
+# Misc
+GNN_Benchmark

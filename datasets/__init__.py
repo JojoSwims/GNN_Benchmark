@@ -38,6 +38,10 @@ Classes:
     MelPedsLoader: Melbourne Pedestrian Counts dataset (55 sensors, hourly).
         Haversine distance graph.
 
+    NOAABuoyLoader: NOAA NDBC ocean buoy network, North Atlantic & Gulf of
+        Mexico, 2020-2023 (hourly). 4 features: WTMP, WSPD, WVHT, PRES.
+        Haversine distance graph.
+
 Example:
     >>> from gnn_benchmark import DataWorkspace
     >>> from gnn_benchmark.datasets import BeijingAirLoader, Cluster1AirLoader
@@ -58,6 +62,7 @@ from gnn_benchmark.datasets.iso import NYISOLoader
 from gnn_benchmark.datasets.melpeds import MelPedsLoader
 from gnn_benchmark.datasets.ny_covid import NYCovidLoader
 from gnn_benchmark.datasets.pems_speed import PEMSBayLoader, MetroLALoader
+from gnn_benchmark.datasets.noaa_buoy import NOAABuoyLoader
 from gnn_benchmark.datasets.pems_volume import PEMS04Loader, PEMS08Loader
 
 __all__ = [
@@ -69,6 +74,7 @@ __all__ = [
     "NYISOLoader",
     "NYCovidLoader",
     "MelPedsLoader",
+    "NOAABuoyLoader",
     "PEMSBayLoader",
     "MetroLALoader",
     "PEMS04Loader",
