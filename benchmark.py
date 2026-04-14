@@ -121,8 +121,8 @@ class DatasetResult:
         mae:          Mean Absolute Error (original units).
         rmse:         Root Mean Squared Error (original units).
         mape:         Mean Absolute Percentage Error (0–100 scale).
-        per_horizon:  Per-step metrics ``{step: {"mae": ..., "rmse": ..., "mape": ...}}``.
-                      ``None`` when ``horizon == 1``.
+        per_horizon:  Per-step metrics ``{step: {"mae": ..., "rmse": ..., "mape": ...}}``
+                      for every horizon step h=1..H.
         error:        Exception message if this dataset failed; other fields are ``None``.
     """
 
@@ -130,7 +130,7 @@ class DatasetResult:
     mae: float | None = None
     rmse: float | None = None
     mape: float | None = None
-    per_horizon: dict[int, dict[str, float]] | None = None
+    per_horizon: dict[int, dict[str, float]] = field(default_factory=dict)
     error: str | None = None
 
 
@@ -149,43 +149,71 @@ class BenchmarkResult:
     model_config: dict = field(default_factory=dict)
     dataset_results: dict[str, DatasetResult] = field(default_factory=dict)
 
+    # Horizons highlighted in the per-dataset table
+    _DISPLAY_HORIZONS = (1, 3, 6, 12)
+
     # ------------------------------------------------------------------
     def summary(self) -> str:
         """
         Return a formatted table of results.
 
-        Datasets that failed are shown with ``ERROR`` instead of metric values.
-        An aggregate row shows the mean across successful datasets.
+        For each dataset a section is printed showing metrics at horizon steps
+        h=1, h=3, h=6, h=12 (whichever exist) plus an ``Avg`` row (mean across
+        all horizon steps).  Datasets that failed are shown with ``ERROR``.
+        A final section shows the mean of ``Avg`` across all successful datasets.
         """
         lines: list[str] = []
-        sep = "─" * 56
+        thick = "═" * 56
+        thin  = "─" * 56
+
         lines.append(f"\nModel: {self.model_name}")
-        lines.append(sep)
-        lines.append(f"{'Dataset':<20} {'MAE':>8} {'RMSE':>8} {'MAPE':>8}")
-        lines.append(sep)
 
         mae_vals, rmse_vals, mape_vals = [], [], []
 
         for name, r in self.dataset_results.items():
+            lines.append(thick)
             if r.error:
-                lines.append(f"{name:<20} {'ERROR':>8}   {r.error[:24]}")
-            else:
-                lines.append(
-                    f"{name:<20} {r.mae:>8.4f} {r.rmse:>8.4f} {r.mape:>7.2f}%"
-                )
-                mae_vals.append(r.mae)
-                rmse_vals.append(r.rmse)
-                mape_vals.append(r.mape)
+                lines.append(f"Dataset: {name}  ERROR: {r.error}")
+                continue
 
-        if mae_vals:
-            lines.append(sep)
+            lines.append(f"Dataset: {name}")
+            lines.append(thin)
+            lines.append(f"{'Horizon':<10} {'MAE':>9} {'RMSE':>9} {'MAPE':>9}")
+            lines.append(thin)
+
+            # Rows for specific horizons that exist in this result
+            for h in self._DISPLAY_HORIZONS:
+                if h in r.per_horizon:
+                    hm = r.per_horizon[h]
+                    lines.append(
+                        f"{'h='+str(h):<10} {hm['mae']:>9.4f}"
+                        f" {hm['rmse']:>9.4f} {hm['mape']:>8.2f}%"
+                    )
+
+            # Avg row (mean of ALL horizon steps)
+            lines.append(thin)
             lines.append(
-                f"{'Mean':<20} {np.mean(mae_vals):>8.4f}"
-                f" {np.mean(rmse_vals):>8.4f}"
-                f" {np.mean(mape_vals):>7.2f}%"
+                f"{'Avg':<10} {r.mae:>9.4f} {r.rmse:>9.4f} {r.mape:>8.2f}%"
             )
 
-        lines.append(sep)
+            mae_vals.append(r.mae)
+            rmse_vals.append(r.rmse)
+            mape_vals.append(r.mape)
+
+        # Cross-dataset mean
+        if mae_vals:
+            lines.append(thick)
+            lines.append("Mean across datasets")
+            lines.append(thin)
+            lines.append(f"{'Horizon':<10} {'MAE':>9} {'RMSE':>9} {'MAPE':>9}")
+            lines.append(thin)
+            lines.append(
+                f"{'Avg':<10} {np.mean(mae_vals):>9.4f}"
+                f" {np.mean(rmse_vals):>9.4f}"
+                f" {np.mean(mape_vals):>8.2f}%"
+            )
+
+        lines.append(thick)
         lines.append("(metrics in original units)")
         return "\n".join(lines)
 
@@ -374,33 +402,30 @@ class BenchmarkRunner:
                 "y_pred must be [num_test_samples, seq_out_len, N, D_out]."
             )
 
-        # 9. Metrics (original units; exclude NaN in ground truth or predictions)
-        valid_mask = ~np.isnan(y_test) & ~np.isnan(y_pred)
-        dataset_mae  = mae(y_test,  y_pred, mask=valid_mask)
-        dataset_rmse = rmse(y_test, y_pred, mask=valid_mask)
-        dataset_mape = mape(y_test, y_pred, mask=valid_mask)
-
-        # 10. Per-horizon metrics
+        # 9. Per-horizon metrics (always computed)
         horizon = wc.horizon
-        per_horizon: dict[int, dict[str, float]] | None = None
-        if horizon > 1:
-            per_horizon = {}
-            for h in range(horizon):
-                yt_h = y_test[:, h, :, :]
-                yp_h = y_pred[:, h, :, :]
-                mask_h = ~np.isnan(yt_h) & ~np.isnan(yp_h)
-                per_horizon[h + 1] = {
-                    "mae":  mae(yt_h,  yp_h, mask=mask_h),
-                    "rmse": rmse(yt_h, yp_h, mask=mask_h),
-                    "mape": mape(yt_h, yp_h, mask=mask_h),
-                }
+        per_horizon: dict[int, dict[str, float]] = {}
+        for h in range(horizon):
+            yt_h = y_test[:, h, :, :]
+            yp_h = y_pred[:, h, :, :]
+            mask_h = ~np.isnan(yt_h) & ~np.isnan(yp_h)
+            per_horizon[h + 1] = {
+                "mae":  mae(yt_h,  yp_h, mask=mask_h),
+                "rmse": rmse(yt_h, yp_h, mask=mask_h),
+                "mape": mape(yt_h, yp_h, mask=mask_h),
+            }
+
+        # 10. Aggregate = mean of per-horizon metrics (matches "Avg" row in summary)
+        dataset_mae  = float(np.mean([v["mae"]  for v in per_horizon.values()]))
+        dataset_rmse = float(np.mean([v["rmse"] for v in per_horizon.values()]))
+        dataset_mape = float(np.mean([v["mape"] for v in per_horizon.values()]))
 
         return DatasetResult(
             dataset_name=dataset_key,
             mae=dataset_mae,
             rmse=dataset_rmse,
             mape=dataset_mape,
-            per_horizon=per_horizon,
+            per_horizon=per_horizon,  # always populated (h=1..horizon)
         )
 
     def _log(self, msg: str) -> None:
