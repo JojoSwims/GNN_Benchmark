@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Run D2STGNN on the Beijing Air dataset.
+"""Tune D2STGNN on the Beijing Air dataset, then report test metrics.
+
+Pipeline:
+    1. Run a small grid search over D2STGNN-specific hyperparameters, scored
+       by validation loss.  The test set is NOT seen during this phase.
+    2. Take the winning config and run the standard benchmark pipeline once
+       for an unbiased test-set evaluation.
 
 Usage:
     python examples/beijing_air_d2stgnn_example.py
@@ -7,19 +13,37 @@ Usage:
 
 from gnn_benchmark.benchmark import BenchmarkRunner
 from gnn_benchmark.models import D2STGNNConfig, D2STGNNModel
+from gnn_benchmark.tuning import Categorical, HyperparameterTuner
 
-runner = BenchmarkRunner(
-    workspace_dir="./benchmark_workspace",
-    datasets=["beijing-air"],
-)
+WORKSPACE = "./benchmark_workspace"
+DATASET = "beijing-air"
 
-# Override only the config values you want to tune for your run.
-config = D2STGNNConfig(
-    max_epochs=20,
+base_config = D2STGNNConfig(
+    max_epochs=10,
     batch_size=32,
-    lr=0.002,
-    early_stop=10,
+    early_stop=5,
 )
 
-result = runner.run(D2STGNNModel(), config=config)
-print(result.summary())
+# D2STGNN-specific search space (2x2 grid = 4 trials).
+# - lr         : D2STGNN's default (2e-3) is higher than GWN/MTGNN
+# - num_hidden : hidden channel width — the main capacity knob
+tuner = HyperparameterTuner(
+    model_factory=lambda: D2STGNNModel(),
+    base_config=base_config,
+    dataset_key=DATASET,
+    workspace_dir=WORKSPACE,
+    search_space={
+        "lr":         Categorical([2e-3, 1e-3]),
+        "num_hidden": Categorical([16, 32]),
+    },
+    strategy="grid",
+)
+tuning_result = tuner.run()
+print(tuning_result.summary())
+
+if tuning_result.best is not None:
+    runner = BenchmarkRunner(workspace_dir=WORKSPACE, datasets=[DATASET])
+    final = runner.run(D2STGNNModel(), config=tuning_result.best.config)
+    print(final.summary())
+else:
+    print("No successful trials — skipping final evaluation.")

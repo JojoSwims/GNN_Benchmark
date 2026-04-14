@@ -112,6 +112,43 @@ DATASET_REGISTRY: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 @dataclass
+class PreparedDataset:
+    """
+    Windowed, split, tensorised tensors for a single dataset.
+
+    Produced by :meth:`BenchmarkRunner.prepare_dataset` and consumed both
+    by the runner itself (for ``fit`` + ``predict`` + metrics) and by the
+    hyperparameter tuner (``fit`` only — the test tensors are ignored
+    during tuning so the held-out set is never leaked).
+
+    Attributes:
+        dataset_name: Registry key of the dataset.
+        x_train:      Training inputs  ``[S_train, seq_in_len, N, D_in]``,
+                      NaN = missing.
+        y_train:      Training targets ``[S_train, seq_out_len, N, D_out]``.
+        x_val:        Validation inputs.
+        y_val:        Validation targets.
+        x_test:       Test inputs (used only for final evaluation).
+        y_test:       Test targets as a raw numpy array (used only for
+                      final metric computation).
+        adj:          Adjacency matrix ``[N, N]`` or ``None``.
+        window_config: The ``WindowConfig`` the splits were built with.
+        split_config:  The ``SplitConfig`` the splits were built with.
+    """
+
+    dataset_name: str
+    x_train: "torch.Tensor"
+    y_train: "torch.Tensor"
+    x_val: "torch.Tensor"
+    y_val: "torch.Tensor"
+    x_test: "torch.Tensor"
+    y_test: np.ndarray
+    adj: np.ndarray | None
+    window_config: Any
+    split_config: Any
+
+
+@dataclass
 class DatasetResult:
     """
     Benchmark metrics for a single dataset.
@@ -342,13 +379,29 @@ class BenchmarkRunner:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _run_dataset(
+    def prepare_dataset(
         self,
         workspace: DataWorkspace,
         dataset_key: str,
-        model: BenchmarkModel,
-        config: Any,
-    ) -> DatasetResult:
+    ) -> PreparedDataset:
+        """
+        Download, window, split, and tensorise a single dataset.
+
+        This is the deterministic data-prep portion of the benchmark pipeline
+        extracted into a reusable helper.  Both ``_run_dataset`` and the
+        hyperparameter tuner call it; the splits they see are therefore
+        guaranteed to be identical.
+
+        The returned :class:`PreparedDataset` carries all six tensors plus
+        the adjacency and config metadata.  Consumers that should not see the
+        test set (i.e. the tuner) simply ignore ``x_test`` / ``y_test``.
+        """
+        if dataset_key not in DATASET_REGISTRY:
+            raise ValueError(
+                f"Unknown dataset: {dataset_key!r}. "
+                f"Available: {list(DATASET_REGISTRY)}"
+            )
+
         # 1. Prepare IR (raw data, NaN for missing values — no imputation applied)
         loader_cls = DATASET_REGISTRY[dataset_key]
         loader = loader_cls()
@@ -385,14 +438,42 @@ class BenchmarkRunner:
         # 6. Adjacency
         adj = ir.get_adjacency_matrix() if ir.edges is not None else None
 
+        return PreparedDataset(
+            dataset_name=dataset_key,
+            x_train=x_train_t,
+            y_train=y_train_t,
+            x_val=x_val_t,
+            y_val=y_val_t,
+            x_test=x_test_t,
+            y_test=y_test,
+            adj=adj,
+            window_config=wc,
+            split_config=sc,
+        )
+
+    def _run_dataset(
+        self,
+        workspace: DataWorkspace,
+        dataset_key: str,
+        model: BenchmarkModel,
+        config: Any,
+    ) -> DatasetResult:
+        prepared = self.prepare_dataset(workspace, dataset_key)
+
         # 7. Fit
         self._log(f"[{dataset_key}] Fitting model …")
-        model.fit(x_train_t, y_train_t, x_val_t, y_val_t, adj, config)
+        model.fit(
+            prepared.x_train, prepared.y_train,
+            prepared.x_val, prepared.y_val,
+            prepared.adj, config,
+        )
 
         # 8. Predict
         self._log(f"[{dataset_key}] Predicting …")
-        y_pred = model.predict(x_test_t, adj, config)
+        y_pred = model.predict(prepared.x_test, prepared.adj, config)
         y_pred = np.asarray(y_pred)
+
+        y_test = prepared.y_test
 
         # Validate output shape
         expected = y_test.shape
@@ -403,7 +484,7 @@ class BenchmarkRunner:
             )
 
         # 9. Per-horizon metrics (always computed)
-        horizon = wc.horizon
+        horizon = prepared.window_config.horizon
         per_horizon: dict[int, dict[str, float]] = {}
         for h in range(horizon):
             yt_h = y_test[:, h, :, :]
