@@ -2,10 +2,13 @@
 """Tune D2STGNN on the Beijing Air dataset, then report test metrics.
 
 Pipeline:
-    1. Run a small grid search over D2STGNN-specific hyperparameters, scored
-       by validation loss.  The test set is NOT seen during this phase.
+    1. Run a grid search over D2STGNN-specific hyperparameters, scored by
+       validation loss.  The test set is NOT seen during this phase.
     2. Take the winning config and run the standard benchmark pipeline once
        for an unbiased test-set evaluation.
+
+Grid is 2 x 3 x 3 = 18 trials.  Each trial performs a full fit() on
+Beijing Air, so the total cost is ~18x a single training run.
 
 Usage:
     python examples/beijing_air_d2stgnn_example.py
@@ -24,9 +27,10 @@ base_config = D2STGNNConfig(
     early_stop=5,
 )
 
-# D2STGNN-specific search space (2x2 grid = 4 trials).
+# D2STGNN-specific search space (2 x 3 x 3 = 18 trials).
 # - lr         : D2STGNN's default (2e-3) is higher than GWN/MTGNN
 # - num_hidden : hidden channel width — the main capacity knob
+# - dropout    : regularisation; D2STGNN uses a lower default (0.1)
 tuner = HyperparameterTuner(
     model_factory=lambda: D2STGNNModel(),
     base_config=base_config,
@@ -34,7 +38,8 @@ tuner = HyperparameterTuner(
     workspace_dir=WORKSPACE,
     search_space={
         "lr":         Categorical([2e-3, 1e-3]),
-        "num_hidden": Categorical([16, 32]),
+        "num_hidden": Categorical([16, 32, 64]),
+        "dropout":    Categorical([0.1, 0.2, 0.3]),
     },
     strategy="grid",
 )

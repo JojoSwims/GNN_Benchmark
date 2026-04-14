@@ -2,10 +2,14 @@
 """Tune Graph WaveNet on the Beijing Air dataset, then report test metrics.
 
 Pipeline:
-    1. Run a small grid search over GWN-specific hyperparameters, scored by
+    1. Run a grid search over GWN-specific hyperparameters, scored by
        validation loss.  The test set is NOT seen during this phase.
     2. Take the winning config and run the standard benchmark pipeline once
        for an unbiased test-set evaluation.
+
+Grid is 2 x 3 x 3 = 18 trials.  Each trial performs a full fit() on
+Beijing Air, so the total cost is ~18x a single training run — run on a
+GPU host if you have one.
 
 Usage:
     python examples/beijing_air_gwn_example.py
@@ -25,9 +29,12 @@ base_config = GWNConfig(
     early_stop=5,
 )
 
-# GWN-specific search space (2x2 grid = 4 trials).
-# - lr         : training signal
-# - dropout    : regularisation; GWN has 2 spatio-temporal blocks and can overfit
+# GWN-specific search space (2 x 3 x 3 = 18 trials).
+# Covers the three knobs that move GWN performance most on small
+# spatiotemporal datasets:
+# - lr      : training signal (log-scale pair)
+# - dropout : regularisation — GWN stacks 4 blocks and overfits easily
+# - nhid    : hidden channel width — the main capacity knob
 tuner = HyperparameterTuner(
     model_factory=lambda: GWNModel(),
     base_config=base_config,
@@ -35,7 +42,8 @@ tuner = HyperparameterTuner(
     workspace_dir=WORKSPACE,
     search_space={
         "lr":      Categorical([1e-3, 5e-4]),
-        "dropout": Categorical([0.1, 0.3]),
+        "dropout": Categorical([0.1, 0.3, 0.5]),
+        "nhid":    Categorical([16, 32, 64]),
     },
     strategy="grid",
 )
