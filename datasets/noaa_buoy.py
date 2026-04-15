@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from gnn_benchmark.core.types import DatasetInfo
+from gnn_benchmark.core.types import DatasetInfo, WindowConfig
 from gnn_benchmark.datasets.base import DatasetLoader
 from gnn_benchmark.utils.geo import haversine_distance
 
@@ -31,8 +31,11 @@ _YEARS = [2022, 2023, 2024, 2025]
 _MAX_MISSING = 0.50
 _FILTER_FEATURE = "WSPD"
 
-_FEATURES = ["WTMP", "WSPD", "WVHT", "PRES"]
-_UNITS = {"WTMP": "K", "WSPD": "m/s", "WVHT": "m", "PRES": "hPa"}
+# WSPD (wind speed) is the prediction target, so it must come first: the model
+# wrappers' inverse-transform slices `std[:D_out]` and assumes target columns
+# are the leading entries of `feature_columns`.
+_FEATURES = ["WSPD", "WTMP", "WVHT", "PRES"]
+_UNITS = {"WSPD": "m/s", "WTMP": "K", "WVHT": "m", "PRES": "hPa"}
 
 # Features where a raw 0 is treated as missing. PRES=0 is physically impossible
 # (vacuum), WVHT=0 on an open-ocean buoy is essentially impossible, and WSPD=0
@@ -80,6 +83,7 @@ class NOAABuoyLoader(DatasetLoader):
             node_order=list(self._node_order),
             feature_columns=_FEATURES,
             units=_UNITS,
+            window_config=WindowConfig(target_columns=["WSPD"]),
             description=(
                 "NOAA NDBC ocean buoy network, Western Hemisphere "
                 "(lon -180 to -50), 2022-2025 (hourly). Features: sea surface "

@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from gnn_benchmark.core.types import DatasetInfo
+from gnn_benchmark.core.types import DatasetInfo, WindowConfig
 from gnn_benchmark.datasets.base import DatasetLoader
 
 ZENODO_URL = "https://doi.org/10.5281/zenodo.4525244"
@@ -146,6 +146,7 @@ class LamaHCELoader(DatasetLoader):
             node_order=self._node_order,
             feature_columns=feature_cols,
             units=units,
+            window_config=WindowConfig(target_columns=["qobs"]),
             description=(
                 f"LamaH-CE Central Europe streamflow network, "
                 f"{self.resolution} resolution, up to 859 gauges, "
