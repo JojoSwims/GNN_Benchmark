@@ -1,8 +1,8 @@
-"""Download and extract the LamaH-CE dataset from Zenodo.
+"""Download and extract the LamaH-CE dataset from Google Drive.
 
 Shared helper used by both LamaHCELoader and LamaHCEDynamicLoader so the
 loaders "just work" (like BeijingAirLoader) without the caller having to
-manually fetch a 1.5 GB tarball.
+manually fetch a multi-GB tarball.
 
 The tarball and the extracted directory are cached under
 ``~/.cache/gnn_benchmark/lamah_ce/`` by default so subsequent runs pay
@@ -12,18 +12,20 @@ only the IR cache cost inside the workspace.
 from __future__ import annotations
 
 import tarfile
-import urllib.request
 from pathlib import Path
 
-# Zenodo record: https://doi.org/10.5281/zenodo.4525244
-# The daily-only variant (~1.5 GB) is enough for `resolution="daily"`; the
-# combined daily+hourly archive (~15 GB) is required for hourly runs.
-_ZENODO_TARBALLS = {
-    "daily":  ("2_LamaH-CE_daily.tar.gz",
-               "https://zenodo.org/records/4525244/files/2_LamaH-CE_daily.tar.gz"),
-    "hourly": ("1_LamaH-CE_daily_hourly.tar.gz",
-               "https://zenodo.org/records/4525244/files/1_LamaH-CE_daily_hourly.tar.gz"),
-}
+try:
+    import gdown
+
+    GDOWN_AVAILABLE = True
+except ImportError:
+    GDOWN_AVAILABLE = False
+
+# Pre-mirrored LamaH-CE archive on Google Drive. Same daily layout as the
+# Zenodo release (record 4525244) but hosted where we get a reliable fetch
+# instead of intermittent 404s.
+_LAMAH_GDRIVE_ID = "1-gMtrag7EtAqhuMB2sJfc85whd8iRLEt"
+_LAMAH_TARBALL_NAME = "lamah_ce.tar.gz"
 
 
 def default_cache_dir() -> Path:
@@ -38,24 +40,23 @@ def ensure_lamah_data_root(
     """Return a local LamaH-CE data_root, downloading + extracting if needed.
 
     Args:
-        resolution: "daily" or "hourly". "hourly" requires the combined
-            archive (daily is a strict subset of hourly in terms of files).
+        resolution: "daily" or "hourly". Only used to locate the matching
+            time-series folder inside the already-extracted archive.
         cache_dir: Override the default cache location.
 
     Returns:
         Path to the extracted LamaH-CE root (the folder containing
         ``D_gauges/``, ``B_basins_intermediate_all/``, …).
     """
-    if resolution not in _ZENODO_TARBALLS:
+    if resolution not in {"daily", "hourly"}:
         raise ValueError(
             f"resolution must be 'daily' or 'hourly', got {resolution!r}"
         )
     cache_root = Path(cache_dir) if cache_dir else default_cache_dir()
     cache_root.mkdir(parents=True, exist_ok=True)
 
-    filename, url = _ZENODO_TARBALLS[resolution]
-    tarball_path = cache_root / filename
-    extract_dir = cache_root / f"extracted_{resolution}"
+    tarball_path = cache_root / _LAMAH_TARBALL_NAME
+    extract_dir = cache_root / "extracted"
     marker = extract_dir / ".extracted_ok"
 
     if marker.exists():
@@ -63,10 +64,15 @@ def ensure_lamah_data_root(
 
     # Download (atomic: write to .part then rename)
     if not tarball_path.exists():
-        print(f"[LamaH-CE] Downloading {url}")
-        print(f"[LamaH-CE] This is a large file; first-run fetch takes a while.")
+        if not GDOWN_AVAILABLE:
+            raise ImportError(
+                "gdown is required to fetch the LamaH-CE dataset. "
+                "Install with: pip install gdown"
+            )
+        print(f"[LamaH-CE] Downloading archive from Google Drive -> {tarball_path}")
+        print("[LamaH-CE] This is a large file; first-run fetch takes a while.")
         tmp = tarball_path.with_suffix(tarball_path.suffix + ".part")
-        urllib.request.urlretrieve(url, str(tmp))
+        gdown.download(id=_LAMAH_GDRIVE_ID, output=str(tmp), quiet=False)
         tmp.rename(tarball_path)
 
     # Extract

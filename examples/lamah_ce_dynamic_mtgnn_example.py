@@ -33,6 +33,8 @@ from gnn_benchmark.tuning import Categorical, HyperparameterTuner
 WORKSPACE = "./benchmark_workspace"
 DATASET = "lamah-ce-dynamic"
 
+print(f"[example] MTGNN on {DATASET} — workspace={WORKSPACE}")
+
 base_config = MTGNNConfig(
     max_epochs=10,
     batch_size=32,
@@ -55,12 +57,16 @@ tuner = HyperparameterTuner(
     },
     strategy="grid",
 )
+print("[example] Starting hyperparameter grid search (18 trials)...")
 tuning_result = tuner.run()
+print("[example] Tuning complete.")
 print(tuning_result.summary())
 
 if tuning_result.best is not None:
+    print("[example] Running final evaluation on test set with best config...")
     runner = BenchmarkRunner(workspace_dir=WORKSPACE, datasets=[DATASET])
     final = runner.run(MTGNNModel(), config=tuning_result.best.config)
+    print("[example] Final evaluation complete.")
     print(final.summary())
 else:
     print("No successful trials — skipping final evaluation.")
