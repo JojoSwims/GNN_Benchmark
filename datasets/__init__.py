@@ -45,6 +45,9 @@ Classes:
     LamaHCEDynamicLoader: LamaH-CE dynamic-only variant (up to 859 gauges).
         Same river network, but only qobs + 8 ERA5-Land met forcings (C=9).
 
+    NOAABuoyLoader: NOAA NDBC ocean buoy network, North Atlantic & Gulf of
+        Mexico, 2020-2023 (hourly). 4 features: WTMP, WSPD, WVHT, PRES.
+        Haversine distance graph.
 Example:
     >>> from gnn_benchmark import DataWorkspace
     >>> from gnn_benchmark.datasets import BeijingAirLoader, Cluster1AirLoader
@@ -68,6 +71,8 @@ from gnn_benchmark.datasets.pems_speed import PEMSBayLoader, MetroLALoader
 from gnn_benchmark.datasets.lamah_ce import LamaHCELoader
 from gnn_benchmark.datasets.lamah_ce_dynamic import LamaHCEDynamicLoader
 from gnn_benchmark.datasets.pems_volume import PEMS04Loader, PEMS08Loader
+from gnn_benchmark.datasets.noaa_buoy import NOAABuoyLoader
+
 
 __all__ = [
     "DatasetLoader",
@@ -82,6 +87,7 @@ __all__ = [
     "MetroLALoader",
     "PEMS04Loader",
     "PEMS08Loader",
+    "NOAABuoyLoader",
     "LamaHCELoader",
     "LamaHCEDynamicLoader",
 ]
