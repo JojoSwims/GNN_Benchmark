@@ -71,8 +71,10 @@ from gnn_benchmark.datasets import (
     Cluster1AirLoader,
     Cluster2AirLoader,
     ElergoneLoader,
+    LamaHCEDynamicLoader,
     MetroLALoader,
     MelPedsLoader,
+    NOAABuoyLoader,
     NYCovidLoader,
     NYISOLoader,
     PEMS04Loader,
@@ -92,6 +94,25 @@ from gnn_benchmark.utils.metrics import mae, mape, rmse
 # Dataset registry
 # ---------------------------------------------------------------------------
 
+def _lamah_ce_dynamic_factory() -> LamaHCEDynamicLoader:
+    """Build a LamaH-CE-dynamic loader using the LAMAH_DATA_ROOT env var.
+
+    The dataset must be downloaded and extracted manually (Zenodo, ~1.5 GB
+    for the daily-only variant).  Setting the environment variable avoids
+    hardcoding a path in examples or the registry.
+    """
+    import os
+    root = os.environ.get("LAMAH_DATA_ROOT")
+    if not root:
+        raise RuntimeError(
+            "LAMAH_DATA_ROOT environment variable is required for the "
+            "'lamah-ce-dynamic' dataset. Set it to the extracted LamaH-CE "
+            "root directory (the folder containing D_gauges/, "
+            "B_basins_intermediate_all/, ...)."
+        )
+    return LamaHCEDynamicLoader(data_root=root)
+
+
 DATASET_REGISTRY: dict[str, Any] = {
     "metr-la":              MetroLALoader,
     "pems-bay":             PEMSBayLoader,
@@ -104,6 +125,8 @@ DATASET_REGISTRY: dict[str, Any] = {
     "nyiso":                NYISOLoader,
     "nyc-covid":            NYCovidLoader,
     "mel-peds":             MelPedsLoader,
+    "lamah-ce-dynamic":     _lamah_ce_dynamic_factory,
+    "noaa-buoy":            NOAABuoyLoader,
 }
 
 
