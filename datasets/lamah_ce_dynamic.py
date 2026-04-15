@@ -266,6 +266,15 @@ class LamaHCEDynamicLoader(DatasetLoader):
             )
 
         series = pd.concat(frames, ignore_index=True)
+
+        # Fill sparse qobs gaps via per-node temporal interpolation.
+        # LamaH-CE already gap-fills up to 6 h internally; only a handful of
+        # NaN remain after the 5% gap filter and they would otherwise
+        # propagate as NaN gradients through GNN message passing.
+        series["qobs"] = series.groupby("node_id")["qobs"].transform(
+            lambda s: s.interpolate(method="linear", limit_direction="both")
+        )
+
         series = series.sort_values(["ts", "node_id"]).reset_index(drop=True)
         return series
 
