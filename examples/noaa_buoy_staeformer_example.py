@@ -13,9 +13,9 @@ Dataset:
     target_columns=["WSPD"], so the model consumes all 4 features but
     predicts a single channel.
 
-    Requires pre-fetched files under datasets/:
-        datasets/noaa_buoy_stations.json
-        datasets/noaa_buoy_data.parquet
+    The loader auto-downloads station metadata and stdmet archives from
+    the NDBC public archive on first use and caches them under
+    ``~/.cache/gnn_benchmark/noaa_buoy/``.
 
 Note on num_heads: in this wrapper tod/dow/spatial embedding dims are 0,
 so model_dim = input_embedding_dim (24) + adaptive_embedding_dim (80) =

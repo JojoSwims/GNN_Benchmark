@@ -12,8 +12,8 @@ Dataset:
     met forcings).  The WindowConfig pins target_columns=["qobs"], so the
     model consumes all 9 features but predicts a single channel (streamflow).
 
-    The loader needs the extracted LamaH-CE directory.  Set:
-        export LAMAH_DATA_ROOT=/path/to/extracted/LamaH-CE
+    The loader auto-downloads the Zenodo archive on first use and caches
+    it under ``~/.cache/gnn_benchmark/lamah_ce/``.
 
 Note:
     D2STGNN *does* use the supplied river-network adjacency (via
@@ -22,7 +22,6 @@ Note:
 Grid is 2 x 3 x 3 = 18 trials.
 
 Usage:
-    export LAMAH_DATA_ROOT=/path/to/extracted/LamaH-CE
     python examples/lamah_ce_dynamic_d2stgnn_example.py
 """
 

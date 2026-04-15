@@ -13,9 +13,9 @@ Dataset:
     target_columns=["WSPD"], so the model consumes all 4 features but
     predicts a single channel.
 
-    Requires pre-fetched files under datasets/:
-        datasets/noaa_buoy_stations.json
-        datasets/noaa_buoy_data.parquet
+    The loader auto-downloads station metadata and stdmet archives from
+    the NDBC public archive on first use and caches them under
+    ``~/.cache/gnn_benchmark/noaa_buoy/``.
 
 Note:
     MTGNN learns its own graph and ignores the haversine adjacency.

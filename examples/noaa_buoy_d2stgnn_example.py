@@ -13,9 +13,9 @@ Dataset:
     target_columns=["WSPD"], so the model consumes all 4 features but
     predicts a single channel.
 
-    Requires pre-fetched files under datasets/:
-        datasets/noaa_buoy_stations.json
-        datasets/noaa_buoy_data.parquet
+    The loader auto-downloads station metadata and stdmet archives from
+    the NDBC public archive on first use and caches them under
+    ``~/.cache/gnn_benchmark/noaa_buoy/``.
 
 D2STGNN consumes the haversine-distance adjacency via doubletransition.
 

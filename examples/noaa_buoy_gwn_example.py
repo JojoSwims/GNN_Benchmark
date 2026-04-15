@@ -14,10 +14,9 @@ Dataset:
     target_columns=["WSPD"], so the model consumes all 4 features but
     predicts a single channel.
 
-    The pre-fetched parquet and station JSON must exist under datasets/:
-        datasets/noaa_buoy_stations.json
-        datasets/noaa_buoy_data.parquet
-    Run the companion fetchers once before using this example.
+    The loader auto-downloads station metadata and stdmet archives from
+    the NDBC public archive on first use and caches them under
+    ``~/.cache/gnn_benchmark/noaa_buoy/``.
 
 GWN consumes the haversine-distance adjacency across buoys.
 

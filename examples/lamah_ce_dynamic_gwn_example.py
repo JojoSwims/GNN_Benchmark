@@ -12,15 +12,14 @@ Dataset:
     met forcings).  The WindowConfig pins target_columns=["qobs"], so the
     model consumes all 9 features but predicts a single channel (streamflow).
 
-    The loader needs the extracted LamaH-CE directory.  Set:
-        export LAMAH_DATA_ROOT=/path/to/extracted/LamaH-CE
+    The loader auto-downloads the Zenodo archive on first use and caches
+    it under ``~/.cache/gnn_benchmark/lamah_ce/``.
 
 Grid is 2 x 3 x 3 = 18 trials.  GWN + the river-network graph is a natural
 fit for streamflow: the doubletransition adjacency already encodes
 upstream/downstream routing.
 
 Usage:
-    export LAMAH_DATA_ROOT=/path/to/extracted/LamaH-CE
     python examples/lamah_ce_dynamic_gwn_example.py
 """
 

@@ -21,6 +21,7 @@ import pandas as pd
 
 from gnn_benchmark.core.types import DatasetInfo, WindowConfig
 from gnn_benchmark.datasets.base import DatasetLoader
+from gnn_benchmark.datasets._lamah_ce_download import ensure_lamah_data_root
 
 ZENODO_URL = "https://doi.org/10.5281/zenodo.4525244"
 
@@ -117,19 +118,24 @@ class LamaHCELoader(DatasetLoader):
 
     Args:
         data_root: Path to the extracted LamaH-CE root directory (the folder
-            that contains A_basins_total_upstrm/, D_gauges/, etc.).
+            that contains A_basins_total_upstrm/, D_gauges/, etc.). If None
+            (the default), the Zenodo tarball is fetched and extracted
+            automatically into ``~/.cache/gnn_benchmark/lamah_ce/``.
         resolution: "daily" or "hourly".
         max_gap_fraction: Exclude gauges where the fraction of remaining gaps
             (after the dataset's own gap-filling) exceeds this threshold.
             Default 0.05 (5 %).
+        cache_dir: Override the auto-download cache location.
     """
 
-    data_root: Path
+    data_root: Path | None = None
     resolution: str = "daily"
     max_gap_fraction: float = 0.05
+    cache_dir: Path | None = None
 
     def __post_init__(self) -> None:
-        self.data_root = Path(self.data_root)
+        if self.data_root is not None:
+            self.data_root = Path(self.data_root)
         self._node_order: list[str] = []
 
     # ── DatasetLoader interface ───────────────────────────────────────────────
@@ -195,12 +201,18 @@ class LamaHCELoader(DatasetLoader):
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _check_data_root(self) -> None:
+        # Auto-download + extract on first use when no explicit path was given.
+        if self.data_root is None:
+            self.data_root = ensure_lamah_data_root(
+                resolution=self.resolution,
+                cache_dir=self.cache_dir,
+            )
+            return
         if not self.data_root.exists():
             raise FileNotFoundError(
                 f"data_root not found: {self.data_root}\n"
-                "Download the LamaH-CE dataset from:\n"
-                "  https://doi.org/10.5281/zenodo.4525244\n"
-                "Extract the tarball and pass the root directory to LamaHCELoader."
+                "Either pass data_root=None to auto-download from Zenodo, "
+                "or extract the archive to the expected path."
             )
         gauge_dir = self.data_root / "D_gauges"
         if not gauge_dir.exists():
