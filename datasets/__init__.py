@@ -38,6 +38,13 @@ Classes:
     MelPedsLoader: Melbourne Pedestrian Counts dataset (55 sensors, hourly).
         Haversine distance graph.
 
+    LamaHCELoader: LamaH-CE Central Europe streamflow dataset (up to 859 gauges).
+        Requires local copy of Zenodo data. River network topology edges.
+        Includes dynamic met + static catchment features (C=30).
+
+    LamaHCEDynamicLoader: LamaH-CE dynamic-only variant (up to 859 gauges).
+        Same river network, but only qobs + 8 ERA5-Land met forcings (C=9).
+
 Example:
     >>> from gnn_benchmark import DataWorkspace
     >>> from gnn_benchmark.datasets import BeijingAirLoader, Cluster1AirLoader
@@ -58,6 +65,8 @@ from gnn_benchmark.datasets.iso import NYISOLoader
 from gnn_benchmark.datasets.melpeds import MelPedsLoader
 from gnn_benchmark.datasets.ny_covid import NYCovidLoader
 from gnn_benchmark.datasets.pems_speed import PEMSBayLoader, MetroLALoader
+from gnn_benchmark.datasets.lamah_ce import LamaHCELoader
+from gnn_benchmark.datasets.lamah_ce_dynamic import LamaHCEDynamicLoader
 from gnn_benchmark.datasets.pems_volume import PEMS04Loader, PEMS08Loader
 
 __all__ = [
@@ -73,4 +82,6 @@ __all__ = [
     "MetroLALoader",
     "PEMS04Loader",
     "PEMS08Loader",
+    "LamaHCELoader",
+    "LamaHCEDynamicLoader",
 ]
