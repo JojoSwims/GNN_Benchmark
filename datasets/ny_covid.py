@@ -131,9 +131,13 @@ class NYCovidLoader(DatasetLoader):
 
             all_fips = sorted(merged["fips"].unique())
 
-            # Freeze node order (sorted FIPS strings). The series tensor and
-            # the adjacency matrix both index through this list, so building
-            # edges from the same all_fips guarantees alignment.
+            # `all_fips` is derived from `merged` *after* dropping rows with
+            # no coordinate, so it:
+            #   - excludes every FIPS we filtered out (no coord in the map),
+            #   - includes the synthetic NYC FIPS (99999) since we inserted
+            #     its coordinate into `coords` above.
+            # The series tensor and the adjacency both index through this
+            # list, so edges built from the same `all_fips` stay aligned.
             self._node_order = [str(f) for f in all_fips]
 
             # --- Build series DataFrame ---
