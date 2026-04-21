@@ -3,13 +3,13 @@
 import json
 import tempfile
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import combinations
 from pathlib import Path
 
 import pandas as pd
 
-from gnn_benchmark.core.types import DatasetInfo
+from gnn_benchmark.core.types import DatasetInfo, WindowConfig
 from gnn_benchmark.datasets.base import DatasetLoader
 from gnn_benchmark.utils.geo import haversine_distance
 
@@ -22,18 +22,27 @@ FIPS_MAP_RAW_URL = (
     "https://raw.githubusercontent.com/josh-byster/fips_lat_long/master/fips_map.json"
 )
 
+_FEATURES = ["new_cases", "new_deaths"]
+_UNITS = {"new_cases": "cases/day", "new_deaths": "deaths/day"}
+
 
 @dataclass
 class NYCovidLoader(DatasetLoader):
     """
-    Loader for NY Times COVID-19 county-level dataset (2020-2023).
+    Loader for NY Times COVID-19 county-level dataset (Jan 2020 – Mar 2023).
 
-    Downloads daily case and death counts for US counties, geolocated via
-    FIPS coordinates.  Produces a symmetric haversine-distance edge set.
+    Downloads cumulative case and death counts for US counties, geolocated via
+    FIPS coordinates, and differences them into daily new cases / new deaths.
+    new_cases is the prediction target, so it is the leading feature column
+    (model wrappers slice std[:D_out] and assume the target is first).
 
     Node order is determined at download time from the intersection of NYT
-    county records and the FIPS coordinate map.
+    county records and the FIPS coordinate map, stored as sorted FIPS strings,
+    and shared between the series tensor and the graph adjacency so that both
+    index into the same nodes.
     """
+
+    _node_order: list[str] = field(default_factory=list, init=False, repr=False)
 
     @property
     def info(self) -> DatasetInfo:
@@ -41,11 +50,16 @@ class NYCovidLoader(DatasetLoader):
             name="ny_covid",
             url=NYT_RAW_URL_TEMPLATE.format(year=YEARS[0]),
             frequency="1D",
-            # Node order determined from source data at download time.
-            node_order=[],
-            feature_columns=["cases", "deaths"],
-            units={"cases": "count", "deaths": "count"},
-            description="NYT COVID-19 US county data 2020-2023 (daily)",
+            node_order=list(self._node_order),
+            feature_columns=_FEATURES,
+            units=_UNITS,
+            window_config=WindowConfig(target_columns=["new_cases"]),
+            description=(
+                "NYT COVID-19 US county-level daily new cases and deaths, "
+                "Jan 2020 – Mar 2023 (NYT stopped county-level updates on "
+                "2023-03-23). Target: new_cases. Edges: fully connected, "
+                "weighted by haversine distance."
+            ),
         )
 
     def download_and_convert(self) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -78,7 +92,11 @@ class NYCovidLoader(DatasetLoader):
             covid = pd.concat(frames, ignore_index=True)
             covid["date"] = pd.to_datetime(covid["date"], format="%Y-%m-%d")
 
-            # NYC patch: assign synthetic FIPS
+            # NYC patch: NYT aggregates the five boroughs into a single
+            # "New York City" county row with no FIPS code. We assign the
+            # synthetic FIPS 99999 (outside the real 5-digit FIPS range) so
+            # NYC becomes one node in the graph. The coordinate below is
+            # Manhattan (40.7128, -74.0060), not a borough-weighted centroid.
             nyc_mask = (covid["county"] == "New York City") & (
                 covid["state"] == "New York"
             )
@@ -113,6 +131,11 @@ class NYCovidLoader(DatasetLoader):
 
             all_fips = sorted(merged["fips"].unique())
 
+            # Freeze node order (sorted FIPS strings). The series tensor and
+            # the adjacency matrix both index through this list, so building
+            # edges from the same all_fips guarantees alignment.
+            self._node_order = [str(f) for f in all_fips]
+
             # --- Build series DataFrame ---
             series_df = self._build_series(merged, all_fips)
 
@@ -124,25 +147,49 @@ class NYCovidLoader(DatasetLoader):
     def _build_series(
         self, merged: pd.DataFrame, all_fips: list[int]
     ) -> pd.DataFrame:
-        """Build densified series panel from merged COVID data."""
+        """Build densified series panel of daily new cases / new deaths.
+
+        NYT reports cumulative counts per county. We reindex onto the full
+        daily grid, forward-fill the cumulative within each FIPS (a missing
+        report means the cumulative did not change), fill leading gaps with 0
+        (pre-first-report days had no cases), then difference per FIPS to get
+        daily new counts. Negative deltas from data revisions are clipped to
+        0, so the resulting series is non-negative and NaN-free.
+        """
         all_dates = pd.date_range(merged["date"].min(), merged["date"].max(), freq="D")
 
         full_index = pd.MultiIndex.from_product(
             [all_dates, all_fips], names=["date", "fips"]
         )
-        panel = merged.set_index(["date", "fips"]).reindex(full_index).reset_index()
+        panel = (
+            merged.set_index(["date", "fips"])[["cases", "deaths"]]
+            .reindex(full_index)
+            .sort_index()
+        )
 
-        # Convert to standard IR format
-        out = pd.DataFrame(
-            {
-                "ts": panel["date"],
-                "node_id": panel["fips"].astype(str),
-                "cases": pd.array(panel["cases"], dtype="Int64"),
-                "deaths": pd.array(panel["deaths"], dtype="Int64"),
+        # Forward-fill cumulative per FIPS; pre-first-report days → 0.
+        panel = panel.groupby(level="fips").ffill().fillna(0.0)
+
+        # Difference to daily new counts per FIPS; clip revisions to 0.
+        new = (
+            panel.groupby(level="fips")
+            .diff()
+            .fillna(0.0)
+            .clip(lower=0.0)
+            .astype(float)
+        )
+
+        out = new.reset_index().rename(
+            columns={
+                "date": "ts",
+                "fips": "node_id",
+                "cases": "new_cases",
+                "deaths": "new_deaths",
             }
         )
-        out = out.sort_values(["ts", "node_id"]).reset_index(drop=True)
-        return out
+        out["node_id"] = out["node_id"].astype(str)
+        out = out[["ts", "node_id", "new_cases", "new_deaths"]]
+        return out.sort_values(["ts", "node_id"]).reset_index(drop=True)
 
     @staticmethod
     def _compute_edges(
