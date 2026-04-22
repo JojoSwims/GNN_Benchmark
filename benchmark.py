@@ -71,6 +71,7 @@ from gnn_benchmark.datasets import (
     Cluster1AirLoader,
     Cluster2AirLoader,
     ElergoneLoader,
+    GDELTProtestLoader,
     LamaHCEDynamicLoader,
     MetroLALoader,
     MelPedsLoader,
@@ -108,6 +109,7 @@ DATASET_REGISTRY: dict[str, Any] = {
     "mel-peds":             MelPedsLoader,
     "lamah-ce-dynamic":     LamaHCEDynamicLoader,
     "noaa-buoy":            NOAABuoyLoader,
+    "gdelt-protest":        GDELTProtestLoader,
 }
 
 

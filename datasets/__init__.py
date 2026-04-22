@@ -48,6 +48,12 @@ Classes:
     NOAABuoyLoader: NOAA NDBC ocean buoy network, North Atlantic & Gulf of
         Mexico, 2020-2023 (hourly). 4 features: WTMP, WSPD, WVHT, PRES.
         Haversine distance graph.
+
+    GDELTProtestLoader: GDELT 2.0 daily per-country geopolitical aggregates
+        over the top-K most active countries. 10 features (protest count,
+        verbal/material conflict, Goldstein scale, tone, etc.). Edges from
+        UNGA voting similarity (Voeten Dataverse) or geographic centroid
+        proximity over the same node set.
 Example:
     >>> from gnn_benchmark import DataWorkspace
     >>> from gnn_benchmark.datasets import BeijingAirLoader, Cluster1AirLoader
@@ -72,6 +78,7 @@ from gnn_benchmark.datasets.lamah_ce import LamaHCELoader
 from gnn_benchmark.datasets.lamah_ce_dynamic import LamaHCEDynamicLoader
 from gnn_benchmark.datasets.pems_volume import PEMS04Loader, PEMS08Loader
 from gnn_benchmark.datasets.noaa_buoy import NOAABuoyLoader
+from gnn_benchmark.datasets.gdelt_protests import GDELTProtestLoader
 
 
 __all__ = [
@@ -90,4 +97,5 @@ __all__ = [
     "NOAABuoyLoader",
     "LamaHCELoader",
     "LamaHCEDynamicLoader",
+    "GDELTProtestLoader",
 ]
