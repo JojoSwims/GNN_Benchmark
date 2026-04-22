@@ -306,9 +306,12 @@ class GWNModel(BenchmarkModel):
             for x_batch, y_batch in train_loader:
                 # x_batch: (B, T, N, D) -> (B, D, N, T) for gwnet
                 x_in = x_batch.permute(0, 3, 2, 1)
-                out = model(x_in)  # (B, out_steps*output_dim, N, 1)
+                out = model(x_in)  # (B, out_steps*output_dim, N, T_out)
+                # T_out is 1 only when in_len <= receptive_field; otherwise the
+                # dilated convs leave a trailing window. Collapse by taking the
+                # last (most recent) step so the reshape preserves the batch dim.
                 out = (
-                    out.squeeze(-1)
+                    out[..., -1]
                     .reshape(-1, out_steps, output_dim, num_nodes)
                     .permute(0, 1, 3, 2)
                 )  # (B, out_steps, N, output_dim)
@@ -334,7 +337,7 @@ class GWNModel(BenchmarkModel):
                     x_in = x_batch.permute(0, 3, 2, 1)
                     out = model(x_in)
                     out = (
-                        out.squeeze(-1)
+                        out[..., -1]
                         .reshape(-1, out_steps, output_dim, num_nodes)
                         .permute(0, 1, 3, 2)
                     )
@@ -392,7 +395,7 @@ class GWNModel(BenchmarkModel):
                 x_in = x_batch.permute(0, 3, 2, 1)
                 out = model(x_in)
                 out = (
-                    out.squeeze(-1)
+                    out[..., -1]
                     .reshape(-1, out_steps, output_dim, num_nodes)
                     .permute(0, 1, 3, 2)
                 )

@@ -7,7 +7,9 @@ def sym_adj(adj):
     """Symmetrically normalize adjacency matrix."""
     adj = sp.coo_matrix(adj)
     rowsum = np.array(adj.sum(1))
-    d_inv_sqrt = np.power(rowsum, -0.5).flatten()
+    # Isolated nodes (rowsum == 0) produce inf; zero them out below.
+    with np.errstate(divide="ignore"):
+        d_inv_sqrt = np.power(rowsum, -0.5).flatten()
     d_inv_sqrt[np.isinf(d_inv_sqrt)] = 0.
     d_mat_inv_sqrt = sp.diags(d_inv_sqrt)
     return adj.dot(d_mat_inv_sqrt).transpose().dot(d_mat_inv_sqrt).astype(np.float32).todense()
@@ -15,7 +17,8 @@ def sym_adj(adj):
 def asym_adj(adj):
     adj = sp.coo_matrix(adj)
     rowsum = np.array(adj.sum(1)).flatten()
-    d_inv = np.power(rowsum, -1).flatten()
+    with np.errstate(divide="ignore"):
+        d_inv = np.power(rowsum, -1).flatten()
     d_inv[np.isinf(d_inv)] = 0.
     d_mat= sp.diags(d_inv)
     return d_mat.dot(adj).astype(np.float32).todense()
@@ -29,7 +32,8 @@ def calculate_normalized_laplacian(adj):
     """
     adj = sp.coo_matrix(adj)
     d = np.array(adj.sum(1))
-    d_inv_sqrt = np.power(d, -0.5).flatten()
+    with np.errstate(divide="ignore"):
+        d_inv_sqrt = np.power(d, -0.5).flatten()
     d_inv_sqrt[np.isinf(d_inv_sqrt)] = 0.
     d_mat_inv_sqrt = sp.diags(d_inv_sqrt)
     normalized_laplacian = sp.eye(adj.shape[0]) - adj.dot(d_mat_inv_sqrt).transpose().dot(d_mat_inv_sqrt).tocoo()
