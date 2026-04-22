@@ -7,5 +7,10 @@ list_of_models.txt
 /models_prep/testingtxt.py
 /models_prep/testingpickle.py
 *__pycache__/*
+__pycache__/
 *.egg-info/
 .eggs/
+
+# Local workspace + example output artifacts
+/benchmark_workspace/
+/ny_covid_explore_out/
