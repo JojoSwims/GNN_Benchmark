@@ -14,7 +14,6 @@ Usage::
 
 from __future__ import annotations
 
-import copy
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -237,6 +236,7 @@ class D2STGNNModel(BenchmarkModel):
         self._output_dim = output_dim
 
         # -- Fit scaler on x_train (per-feature, ignoring NaN) -------------
+        # Computed on CPU so we do not have to stage the full split on GPU.
         flat = x_train.reshape(-1, input_dim)  # (S*T*N, D)
         mean = torch.nanmean(flat, dim=0)      # (D,)
         diff_sq = (flat - mean) ** 2
@@ -246,34 +246,25 @@ class D2STGNNModel(BenchmarkModel):
         scaler = _FeatureScaler(mean, std).to(device)
         self._scaler = scaler
 
-        # -- Normalize x and handle NaN ------------------------------------
-        x_train_n = torch.nan_to_num(scaler.transform(x_train.to(device)))
-        x_val_n = torch.nan_to_num(scaler.transform(x_val.to(device)))
-
-        # -- Pad 2 zero time-feature channels ------------------------------
-        # D2STGNN expects [B, L, N, num_feat + 2] where the last 2 channels
-        # are normalised time-in-day and day-in-week.  We pass zeros so the
-        # model uses T_i_D_emb[0] and D_i_W_emb[0] as constant embeddings.
-        x_train_n = self._pad_time_features(x_train_n)
-        x_val_n = self._pad_time_features(x_val_n)
-
-        # -- Prepare y (replace NaN with 0 for loss) -----------------------
-        y_train_d = torch.nan_to_num(y_train.to(device))
-        y_val_d = torch.nan_to_num(y_val.to(device))
-
         # -- Build adjacency supports -------------------------------------
         adjs = _build_d2stgnn_adjs(adj, num_nodes, device)
 
-        # -- DataLoaders ---------------------------------------------------
+        # -- DataLoaders (splits stay on CPU; batches stream to device) ---
+        # Keeping the raw tensors off GPU is the main memory saving: only
+        # one batch at a time is resident. Normalisation, NaN-handling and
+        # the two zero time-feature channels are applied per-batch below.
+        pin = device.type == "cuda"
         train_loader = DataLoader(
-            TensorDataset(x_train_n, y_train_d),
+            TensorDataset(x_train, y_train),
             batch_size=cfg.batch_size,
             shuffle=True,
+            pin_memory=pin,
         )
         val_loader = DataLoader(
-            TensorDataset(x_val_n, y_val_d),
+            TensorDataset(x_val, y_val),
             batch_size=cfg.batch_size,
             shuffle=False,
+            pin_memory=pin,
         )
 
         # -- Build model ---------------------------------------------------
@@ -325,6 +316,9 @@ class D2STGNNModel(BenchmarkModel):
             model.train()
             batch_losses: list[float] = []
             for x_batch, y_batch in train_loader:
+                x_batch, y_batch = self._prepare_batch(
+                    x_batch, y_batch, scaler, device,
+                )
                 out = model(x_batch)  # (B, out_steps, N, output_dim)
                 out = scaler.inverse_transform(out)
                 loss = criterion(out, y_batch)
@@ -345,6 +339,9 @@ class D2STGNNModel(BenchmarkModel):
             batch_losses_val: list[float] = []
             with torch.no_grad():
                 for x_batch, y_batch in val_loader:
+                    x_batch, y_batch = self._prepare_batch(
+                        x_batch, y_batch, scaler, device,
+                    )
                     out = model(x_batch)
                     out = scaler.inverse_transform(out)
                     loss = criterion(out, y_batch)
@@ -355,7 +352,12 @@ class D2STGNNModel(BenchmarkModel):
             # ---- early stopping ----
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                best_state = copy.deepcopy(model.state_dict())
+                # Keep the best snapshot on CPU so it does not compete for
+                # VRAM with the live model + optimizer state.
+                best_state = {
+                    k: v.detach().cpu().clone()
+                    for k, v in model.state_dict().items()
+                }
                 wait = 0
             else:
                 wait += 1
@@ -365,6 +367,9 @@ class D2STGNNModel(BenchmarkModel):
         if best_state is not None:
             model.load_state_dict(best_state)
         self._model = model
+
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
         return TrainingHistory(train_loss=train_losses, val_loss=val_losses)
 
@@ -382,22 +387,27 @@ class D2STGNNModel(BenchmarkModel):
         scaler = self._scaler
         model = self._model
 
-        x_test_n = torch.nan_to_num(scaler.transform(x_test.to(device)))
-        x_test_n = self._pad_time_features(x_test_n)
-
+        pin = device.type == "cuda"
         loader = DataLoader(
-            TensorDataset(x_test_n),
+            TensorDataset(x_test),
             batch_size=cfg.batch_size,
             shuffle=False,
+            pin_memory=pin,
         )
 
         model.eval()
         preds: list[np.ndarray] = []
         with torch.no_grad():
             for (x_batch,) in loader:
+                x_batch = x_batch.to(device, non_blocking=pin)
+                x_batch = torch.nan_to_num(scaler.transform(x_batch))
+                x_batch = self._pad_time_features(x_batch)
                 out = model(x_batch)  # (B, out_steps, N, output_dim)
                 out = scaler.inverse_transform(out)
                 preds.append(out.cpu().numpy())
+
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
         return np.concatenate(preds, axis=0)
 
@@ -407,6 +417,27 @@ class D2STGNNModel(BenchmarkModel):
         return asdict(self._cfg)
 
     # ---- Private helpers -------------------------------------------------
+
+    @classmethod
+    def _prepare_batch(
+        cls,
+        x_batch: torch.Tensor,
+        y_batch: torch.Tensor,
+        scaler: _FeatureScaler,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Move one batch to ``device`` and apply scaling/NaN/padding.
+
+        Doing this per batch (instead of once for the whole split) keeps
+        only a single mini-batch resident on GPU at a time.
+        """
+        non_blocking = device.type == "cuda"
+        x_batch = x_batch.to(device, non_blocking=non_blocking)
+        y_batch = y_batch.to(device, non_blocking=non_blocking)
+        x_batch = torch.nan_to_num(scaler.transform(x_batch))
+        y_batch = torch.nan_to_num(y_batch)
+        x_batch = cls._pad_time_features(x_batch)
+        return x_batch, y_batch
 
     @staticmethod
     def _pad_time_features(x: torch.Tensor) -> torch.Tensor:
