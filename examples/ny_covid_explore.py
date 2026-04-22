@@ -364,6 +364,9 @@ def main() -> None:
     print("Running connectivity analysis on distance graph...")
     conn = connectivity_analysis(ir.edges, nodes)
     plot_connectivity_curve(conn, OUT_DIR / "09_connectivity_vs_cutoff.png")
+    plot_isolation_curve(
+        conn["first_neighbor_dist"], OUT_DIR / "10_isolated_nodes_vs_cutoff.png"
+    )
 
     # ── Per-feature stats summary ────────────────────────────────────────────
     n_all_zero_cases = int((cases_stats["total"] == 0).sum())
@@ -429,6 +432,10 @@ def main() -> None:
         "-" * 60,
         format_connectivity_report(conn),
         "",
+        "Isolated-node count at sub-d_min cutoffs",
+        "-" * 60,
+        format_isolation_report(conn["first_neighbor_dist"]),
+        "",
         "Diagnostics — major issues flagged for training",
         "=" * 60,
         diagnostics,
@@ -485,6 +492,9 @@ def connectivity_analysis(
       - events:            list[(distance, components_after)], sorted by
                            ascending distance, one entry per component merge
       - n_events:          int, number of merges (always n_nodes - 1)
+      - first_neighbor_dist: np.ndarray of length n_nodes, distance to each
+                           node's nearest neighbour (so # isolated at cutoff
+                           c is just (first_neighbor_dist > c).sum()).
     """
     if edges is None or edges.empty or len(nodes) <= 1:
         return {
@@ -493,6 +503,7 @@ def connectivity_analysis(
             "d_full_connected": float("nan"),
             "events": [],
             "n_events": 0,
+            "first_neighbor_dist": np.array([], dtype=np.float64),
         }
 
     node_to_idx = {n: i for i, n in enumerate(nodes)}
@@ -548,7 +559,143 @@ def connectivity_analysis(
         "d_full_connected": d_full_connected,
         "events": events,
         "n_events": len(events),
+        "first_neighbor_dist": first_neighbor_dist,
     }
+
+
+# Cutoffs (in metres) at which the isolation count is tabulated. Chosen
+# as a geometric sweep across the sub-d_min_degree range to expose where
+# the number of isolated nodes starts "exploding" — i.e. the elbow of the
+# isolation-vs-cutoff curve. The largest value is just above the
+# observed d_min_degree (~1263 km) so the sweep brackets the full range.
+ISOLATION_CUTOFFS_KM = (
+    25, 50, 75, 100, 150, 200, 300, 400, 500, 600, 800, 1000, 1200, 1300,
+)
+
+
+def plot_isolation_curve(
+    first_neighbor_dist: np.ndarray, out_path: Path
+) -> None:
+    """Plot # isolated nodes vs distance cutoff.
+
+    A node is "isolated" at cutoff c iff its nearest-neighbour distance
+    exceeds c. The curve is the complementary CDF of first-neighbour
+    distances, shown on linear and log-log axes side by side so the
+    explosion point (the elbow where isolation count grows rapidly as the
+    cutoff drops) is visible on either scale.
+    """
+    if first_neighbor_dist.size == 0:
+        return
+
+    # Use every sorted first-neighbour distance as a curve point — at a
+    # cutoff equal to the k-th smallest first-neighbour distance, exactly
+    # N - k nodes are isolated (the ones with larger nearest-neighbour
+    # distance). Prepend 0 so the curve starts at N (cutoff=0 → every
+    # node isolated). Drop any infinite values defensively.
+    finite = first_neighbor_dist[np.isfinite(first_neighbor_dist)]
+    sorted_fnd = np.sort(finite)
+    N = first_neighbor_dist.size
+    # At cutoff = sorted_fnd[k] (inclusive), nodes with fnd > cutoff are
+    # isolated; that is N - (k + 1) nodes (because sorted_fnd[k] is
+    # included).
+    cutoffs_m = np.concatenate([[0.0], sorted_fnd])
+    isolated = np.concatenate([[N], N - np.arange(1, sorted_fnd.size + 1)])
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Linear axes
+    axes[0].plot(cutoffs_m / 1000.0, isolated, color="C0", linewidth=1.2)
+    axes[0].set_xlabel("Distance cutoff (km)")
+    axes[0].set_ylabel("# isolated nodes")
+    axes[0].set_title("Isolated nodes vs cutoff (linear)")
+    axes[0].grid(alpha=0.3)
+
+    # Log-log axes — compress the "almost everyone isolated" range so the
+    # elbow is easy to see.
+    axes[1].plot(cutoffs_m / 1000.0, isolated, color="C0", linewidth=1.2)
+    axes[1].set_xscale("log")
+    axes[1].set_yscale("log")
+    axes[1].set_xlabel("Distance cutoff (km, log)")
+    axes[1].set_ylabel("# isolated nodes (log)")
+    axes[1].set_title("Isolated nodes vs cutoff (log-log)")
+    axes[1].grid(alpha=0.3, which="both")
+
+    # Mark the discrete tabulated cutoffs on both axes.
+    for km in ISOLATION_CUTOFFS_KM:
+        n_iso = int((first_neighbor_dist > km * 1000.0).sum())
+        for ax in axes:
+            ax.axvline(km, color="C7", alpha=0.25, linewidth=0.6)
+        axes[0].annotate(
+            f"{km}km\n{n_iso}",
+            xy=(km, n_iso),
+            xytext=(2, 2),
+            textcoords="offset points",
+            fontsize=7,
+            color="C3",
+        )
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+
+
+def format_isolation_report(first_neighbor_dist: np.ndarray) -> str:
+    """Table of # isolated nodes at a geometric sweep of cutoffs,
+    plus an 'explosion' hint computed from the steepest log-log drop."""
+    if first_neighbor_dist.size == 0:
+        return "  (no edges — isolation sweep skipped)"
+
+    rows = [
+        "  cutoff (km) |  # isolated  |  % isolated  |  Δ since prev",
+        "  " + "-" * 56,
+    ]
+    N = first_neighbor_dist.size
+    prev = None
+    for km in ISOLATION_CUTOFFS_KM:
+        n_iso = int((first_neighbor_dist > km * 1000.0).sum())
+        pct = 100.0 * n_iso / N
+        delta = "" if prev is None else f"  {prev - n_iso:+d}"
+        rows.append(
+            f"  {km:>10d} |  {n_iso:>10d}  |  {pct:>9.2f}%  |{delta}"
+        )
+        prev = n_iso
+
+    # Heuristic elbow: the cutoff where the biggest *relative* jump in
+    # isolation happens as the cutoff decreases. Using finite differences
+    # on the tabulated grid so the signal comes from the requested
+    # cutoffs rather than the dense per-node curve.
+    iso_by_cutoff = [
+        int((first_neighbor_dist > km * 1000.0).sum())
+        for km in ISOLATION_CUTOFFS_KM
+    ]
+    # Δlog(iso) between adjacent grid points, computed as we walk the
+    # cutoff downward (so positive Δlog = isolation count grew when
+    # cutoff shrank, i.e. the "explosion" direction).
+    best_ratio = 0.0
+    best_pair = None
+    for (km_hi, iso_hi), (km_lo, iso_lo) in zip(
+        list(zip(ISOLATION_CUTOFFS_KM, iso_by_cutoff))[1:],
+        list(zip(ISOLATION_CUTOFFS_KM, iso_by_cutoff))[:-1],
+    ):
+        if iso_hi <= 0:
+            continue
+        ratio = iso_lo / max(iso_hi, 1)
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_pair = (km_lo, iso_lo, km_hi, iso_hi)
+
+    hint = ""
+    if best_pair is not None:
+        km_lo, iso_lo, km_hi, iso_hi = best_pair
+        hint = (
+            f"\n  Steepest relative growth between tabulated cutoffs: "
+            f"{km_hi}→{km_lo} km, isolated {iso_hi}→{iso_lo} "
+            f"(x{best_ratio:.2f}). Below this the isolation count starts "
+            "dominating; treat this as the first hint of where to NOT "
+            "set the cutoff."
+        )
+
+    return "\n".join(rows) + hint
 
 
 def plot_connectivity_curve(conn: dict, out_path: Path) -> None:
