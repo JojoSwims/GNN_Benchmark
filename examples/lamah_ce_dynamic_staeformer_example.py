@@ -15,14 +15,24 @@ Dataset:
     The loader auto-downloads the Zenodo archive on first use and caches
     it under ``~/.cache/gnn_benchmark/lamah_ce/``.
 
-Note on num_heads: in this wrapper tod/dow/spatial embedding dims are 0,
-so model_dim = input_embedding_dim (24) + adaptive_embedding_dim (80) =
-104.  num_heads must divide 104, which is why we search {2, 4, 8}.
+Memory notes:
+    Spatial self-attention scales with N² per head per layer. With
+    N=859 gauges, model_dim=104, num_heads=4 and the default 3 layers
+    this comes out to ~47M fp32 entries per batch of 16 just for the
+    attention scores — tight on 12 GB cards and a common OOM source.
+    We halve ``adaptive_embedding_dim`` (80 → 40, model_dim drops to
+    64) and drop ``num_layers`` to 2 to cut attention memory ~4×.
+    If you still OOM, lower ``batch_size`` to 4 or set
+    ``adaptive_embedding_dim=16``.
+
+    With model_dim=64 the valid ``num_heads`` divisors are {2, 4, 8};
+    the search grid below stays inside that set.
 
 STAEFormer does not use the supplied graph — the transformer + adaptive
 embedding ignore `adj`.
 
-Grid is 2 x 3 x 3 = 18 trials.
+Grid is 2 x 2 x 2 = 8 trials (down from 18) to keep the sweep bounded
+while the per-trial memory footprint is smaller.
 
 Usage:
     python examples/lamah_ce_dynamic_staeformer_example.py
@@ -39,14 +49,19 @@ print(f"[example] STAEFormer on {DATASET} — workspace={WORKSPACE}")
 
 base_config = STAEFormerConfig(
     max_epochs=10,
-    batch_size=16,
+    batch_size=8,
     early_stop=5,
+    adaptive_embedding_dim=40,
+    feed_forward_dim=128,
+    num_layers=2,
 )
 
-# STAEFormer-specific search space (2 x 3 x 3 = 18 trials).
+# STAEFormer-specific search space (2 x 2 x 2 = 8 trials).
 # - lr         : training signal (log-scale pair)
-# - num_layers : transformer depth — the main capacity knob
-# - num_heads  : attention heads; all values must divide model_dim (104)
+# - num_layers : transformer depth; kept low because each layer doubles
+#                the spatial-attention activation footprint.
+# - num_heads  : attention heads; all values must divide model_dim (64
+#                with the config above).
 tuner = HyperparameterTuner(
     model_factory=lambda: STAEFormerModel(),
     base_config=base_config,
@@ -54,12 +69,12 @@ tuner = HyperparameterTuner(
     workspace_dir=WORKSPACE,
     search_space={
         "lr":         Categorical([1e-3, 5e-4]),
-        "num_layers": Categorical([2, 3, 4]),
-        "num_heads":  Categorical([2, 4, 8]),
+        "num_layers": Categorical([1, 2]),
+        "num_heads":  Categorical([2, 4]),
     },
     strategy="grid",
 )
-print("[example] Starting hyperparameter grid search (18 trials)...")
+print("[example] Starting hyperparameter grid search (8 trials)...")
 tuning_result = tuner.run()
 print("[example] Tuning complete.")
 print(tuning_result.summary())
