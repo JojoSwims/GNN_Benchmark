@@ -14,7 +14,6 @@ Usage::
 
 from __future__ import annotations
 
-import copy
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -171,6 +170,7 @@ class STAEFormerModel(BenchmarkModel):
         self._output_dim = output_dim
 
         # -- Fit scaler on x_train (per-feature, ignoring NaN) -------------
+        # Computed on CPU so we do not have to stage the full split on GPU.
         # x_train: (S, T, N, D)
         flat = x_train.reshape(-1, input_dim)  # (S*T*N, D)
         mean = torch.nanmean(flat, dim=0)      # (D,)
@@ -182,24 +182,22 @@ class STAEFormerModel(BenchmarkModel):
         scaler = _FeatureScaler(mean, std).to(device)
         self._scaler = scaler
 
-        # -- Normalize x and handle NaN ------------------------------------
-        x_train_n = torch.nan_to_num(scaler.transform(x_train.to(device)))
-        x_val_n = torch.nan_to_num(scaler.transform(x_val.to(device)))
-
-        # -- Prepare y (replace NaN with 0 for loss) -----------------------
-        y_train_d = torch.nan_to_num(y_train.to(device))
-        y_val_d = torch.nan_to_num(y_val.to(device))
-
-        # -- DataLoaders ---------------------------------------------------
+        # -- DataLoaders (splits stay on CPU; batches stream to device) ---
+        # Keeping the raw tensors off GPU is the main memory saving: only
+        # one batch at a time is resident. Normalisation and NaN-handling
+        # are applied per-batch below.
+        pin = device.type == "cuda"
         train_loader = DataLoader(
-            TensorDataset(x_train_n, y_train_d),
+            TensorDataset(x_train, y_train),
             batch_size=cfg.batch_size,
             shuffle=True,
+            pin_memory=pin,
         )
         val_loader = DataLoader(
-            TensorDataset(x_val_n, y_val_d),
+            TensorDataset(x_val, y_val),
             batch_size=cfg.batch_size,
             shuffle=False,
+            pin_memory=pin,
         )
 
         # -- Build model ---------------------------------------------------
@@ -243,6 +241,9 @@ class STAEFormerModel(BenchmarkModel):
             model.train()
             batch_losses: list[float] = []
             for x_batch, y_batch in train_loader:
+                x_batch, y_batch = self._prepare_batch(
+                    x_batch, y_batch, scaler, device,
+                )
                 out = model(x_batch)
                 out = scaler.inverse_transform(out)
                 loss = criterion(out, y_batch)
@@ -262,6 +263,9 @@ class STAEFormerModel(BenchmarkModel):
             batch_losses_val: list[float] = []
             with torch.no_grad():
                 for x_batch, y_batch in val_loader:
+                    x_batch, y_batch = self._prepare_batch(
+                        x_batch, y_batch, scaler, device,
+                    )
                     out = model(x_batch)
                     out = scaler.inverse_transform(out)
                     loss = criterion(out, y_batch)
@@ -272,7 +276,12 @@ class STAEFormerModel(BenchmarkModel):
             # ---- early stopping ----
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                best_state = copy.deepcopy(model.state_dict())
+                # Keep the best snapshot on CPU so it does not compete for
+                # VRAM with the live model + optimizer state.
+                best_state = {
+                    k: v.detach().cpu().clone()
+                    for k, v in model.state_dict().items()
+                }
                 wait = 0
             else:
                 wait += 1
@@ -282,6 +291,9 @@ class STAEFormerModel(BenchmarkModel):
         if best_state is not None:
             model.load_state_dict(best_state)
         self._model = model
+
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
         return TrainingHistory(train_loss=train_losses, val_loss=val_losses)
 
@@ -299,21 +311,26 @@ class STAEFormerModel(BenchmarkModel):
         scaler = self._scaler
         model = self._model
 
-        x_test_n = torch.nan_to_num(scaler.transform(x_test.to(device)))
-
+        pin = device.type == "cuda"
         loader = DataLoader(
-            TensorDataset(x_test_n),
+            TensorDataset(x_test),
             batch_size=cfg.batch_size,
             shuffle=False,
+            pin_memory=pin,
         )
 
         model.eval()
         preds: list[np.ndarray] = []
         with torch.no_grad():
             for (x_batch,) in loader:
+                x_batch = x_batch.to(device, non_blocking=pin)
+                x_batch = torch.nan_to_num(scaler.transform(x_batch))
                 out = model(x_batch)
                 out = scaler.inverse_transform(out)
                 preds.append(out.cpu().numpy())
+
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
         return np.concatenate(preds, axis=0)
 
@@ -321,3 +338,24 @@ class STAEFormerModel(BenchmarkModel):
         if self._cfg is None:
             return {}
         return asdict(self._cfg)
+
+    # ---- Private helpers -------------------------------------------------
+
+    @staticmethod
+    def _prepare_batch(
+        x_batch: torch.Tensor,
+        y_batch: torch.Tensor,
+        scaler: _FeatureScaler,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Move one batch to ``device`` and apply scaling / NaN handling.
+
+        Doing this per batch (instead of once for the whole split) keeps
+        only a single mini-batch resident on GPU at a time.
+        """
+        non_blocking = device.type == "cuda"
+        x_batch = x_batch.to(device, non_blocking=non_blocking)
+        y_batch = y_batch.to(device, non_blocking=non_blocking)
+        x_batch = torch.nan_to_num(scaler.transform(x_batch))
+        y_batch = torch.nan_to_num(y_batch)
+        return x_batch, y_batch
