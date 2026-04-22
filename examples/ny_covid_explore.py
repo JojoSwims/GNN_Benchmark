@@ -380,11 +380,13 @@ def main() -> None:
     # ── Diagnostics: major issues that would bite during training ────────────
     spike_counties = detect_spike_counties(panel, SPIKE_MULT)
     dense_edge_ratio = n_edges / max(N * (N - 1), 1)
+    n_isolated_nodes = int(np.isinf(conn["first_neighbor_dist"]).sum())
     diagnostics = run_diagnostics(
         T=T,
         N=N,
         n_edges=n_edges,
         dense_edge_ratio=dense_edge_ratio,
+        n_isolated_nodes=n_isolated_nodes,
         cases_stats=cases_stats,
         deaths_stats=deaths_stats,
         spike_counties=spike_counties,
@@ -551,7 +553,14 @@ def connectivity_analysis(
     else:
         d_min_degree = float(first_neighbor_dist.max())
 
-    d_full_connected = events[-1][0] if events else float("nan")
+    # d_full_connected only exists if components actually reached 1.
+    # If the sweep ended with the graph still disconnected (e.g. a
+    # distance cutoff was applied upstream so no edge joins Hawaii to
+    # the mainland), report +inf.
+    if components == 1 and events:
+        d_full_connected = events[-1][0]
+    else:
+        d_full_connected = float("inf")
 
     return {
         "n_nodes": N,
@@ -722,16 +731,28 @@ def plot_connectivity_curve(conn: dict, out_path: Path) -> None:
     )
     ax.grid(alpha=0.3, which="both")
 
-    d1_km = conn["d_min_degree"] / 1000.0
-    d_full_km = conn["d_full_connected"] / 1000.0
-    ax.axvline(
-        d1_km, color="C1", linestyle="--", linewidth=1.0,
-        label=f"no isolated nodes (d={d1_km:.1f} km)",
-    )
-    ax.axvline(
-        d_full_km, color="C3", linestyle="--", linewidth=1.0,
-        label=f"fully connected (d={d_full_km:.1f} km)",
-    )
+    d1 = conn["d_min_degree"]
+    d_full = conn["d_full_connected"]
+    if np.isfinite(d1):
+        ax.axvline(
+            d1 / 1000.0, color="C1", linestyle="--", linewidth=1.0,
+            label=f"no isolated nodes (d={d1 / 1000:.1f} km)",
+        )
+    if np.isfinite(d_full):
+        ax.axvline(
+            d_full / 1000.0, color="C3", linestyle="--", linewidth=1.0,
+            label=f"fully connected (d={d_full / 1000:.1f} km)",
+        )
+    # If the cutoff graph is disconnected, annotate the residual state
+    # so the reader knows why the curve doesn't reach 1.
+    components_final = conn["n_nodes"] - len(events)
+    n_iso = int(np.isinf(conn["first_neighbor_dist"]).sum())
+    if components_final > 1 or n_iso > 0:
+        ax.axhline(
+            components_final, color="C7", linestyle=":", linewidth=0.8,
+            label=f"residual components = {components_final} "
+            f"(incl. {n_iso} isolated nodes)",
+        )
     ax.legend(loc="upper right", fontsize=9)
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
@@ -739,40 +760,79 @@ def plot_connectivity_curve(conn: dict, out_path: Path) -> None:
 
 
 def format_connectivity_report(conn: dict) -> str:
-    """Short textual summary of the connectivity sweep, with every merge
-    event between d_min_degree and d_full_connected listed inline."""
-    if not conn["events"]:
+    """Short textual summary of the connectivity sweep.
+
+    Handles three cases:
+      1. The edge list covers every pair (pre-cutoff). We report
+         d_min_degree, d_full_connected, and every merge event from d_min
+         onwards.
+      2. A cutoff is in effect but the graph is still fully connected —
+         same as (1) but events only go up to the largest edge kept.
+      3. A cutoff leaves the graph disconnected (e.g. Hawaii, Puerto
+         Rico have no edges within 150 km). Then d_min_degree and/or
+         d_full_connected are +inf; we report the residual number of
+         isolated nodes and connected components instead.
+    """
+    if not conn["events"] and conn["first_neighbor_dist"].size == 0:
         return "  (no edges — connectivity analysis skipped)"
 
     d1 = conn["d_min_degree"]
     d_full = conn["d_full_connected"]
     events = conn["events"]
+    fnd = conn["first_neighbor_dist"]
 
-    # Filter the in-between events: distance strictly > d1 and <= d_full.
-    # (d1 itself is always a merge event since it is where the last
-    # singleton stops being isolated.)
-    between = [(d, c) for (d, c) in events if d1 < d <= d_full]
+    n_isolated_overall = int(np.isinf(fnd).sum())
+    # Components remaining after all known merges. Starts at N, drops by
+    # one per merge event.
+    components_final = conn["n_nodes"] - len(events)
+
+    def _fmt_m(x: float) -> str:
+        if not np.isfinite(x):
+            return "∞ (graph has permanent isolated nodes / components)"
+        return f"{x:,.1f} m ({x / 1000:,.2f} km)"
 
     header = [
         f"  nodes:                              {conn['n_nodes']}",
-        f"  lowest cutoff, no isolated nodes:   {d1:,.1f} m "
-        f"({d1 / 1000:,.2f} km)",
-        f"  lowest cutoff, fully connected:     {d_full:,.1f} m "
-        f"({d_full / 1000:,.2f} km)",
+        f"  lowest cutoff, no isolated nodes:   {_fmt_m(d1)}",
+        f"  lowest cutoff, fully connected:     {_fmt_m(d_full)}",
+        f"  isolated nodes (no edge at all):    {n_isolated_overall}",
+        f"  connected components remaining:     {components_final}",
         f"  merge events total:                 {len(events)}",
-        f"  merge events strictly after d_min:  {len(between)}",
-        "",
-        "  Every merge event (distance_m, components_after):",
     ]
 
-    # To avoid dumping thousands of events to stdout when N is huge, sample
-    # if needed; but we still want the user to be able to pick a cutoff, so
-    # print all merges from d1 onwards (the user specifically asked for
-    # them) and downsample the pre-d1 history.
+    # If d1 is +inf we cannot list events strictly between d1 and
+    # d_full; fall back to a downsampled event list covering the whole
+    # sweep so the caller still gets a feel for component structure.
+    if not np.isfinite(d1):
+        header.append(
+            "  (d_min_degree is infinite — the graph has permanent "
+            "isolated nodes with this edge set, so no cutoff in this "
+            "edge list can eliminate them)"
+        )
+        header.append("")
+        header.append(
+            "  Merge events, downsampled (distance_m, components_after):"
+        )
+        if len(events) > 40:
+            step = max(1, len(events) // 40)
+            sampled = events[::step]
+        else:
+            sampled = events
+        rows = [f"    {d:>14,.1f} m   → {c} components" for d, c in sampled]
+        return "\n".join(header + rows)
+
+    # Regular case: d_min_degree is finite. In-between events sit strictly
+    # between d1 and d_full; d1 itself is always a merge (it is where the
+    # last singleton stops being isolated).
+    if np.isfinite(d_full):
+        between = [(d, c) for (d, c) in events if d1 < d <= d_full]
+    else:
+        between = [(d, c) for (d, c) in events if d > d1]
+
+    header.append(f"  merge events strictly after d_min:  {len(between)}")
+    header += ["", "  Every merge event (distance_m, components_after):"]
+
     pre_d1 = [(d, c) for (d, c) in events if d < d1]
-    # Take at most 20 evenly-spaced pre-d1 samples so the printout stays
-    # readable without hiding the tail information the user actually asked
-    # for.
     if len(pre_d1) > 20:
         step = max(1, len(pre_d1) // 20)
         pre_d1_shown = pre_d1[::step]
@@ -786,13 +846,14 @@ def format_connectivity_report(conn: dict) -> str:
     rows: list[str] = []
     for d, c in pre_d1_shown:
         rows.append(f"    {d:>14,.1f} m   → {c} components")
-    rows.append(
-        f"    {d1:>14,.1f} m   → "
-        f"{next(c for (dd, c) in events if dd == d1)} components  "
-        f"[no isolated nodes]"
-    )
+    d1_event = next((c for (dd, c) in events if dd == d1), None)
+    if d1_event is not None:
+        rows.append(
+            f"    {d1:>14,.1f} m   → {d1_event} components  "
+            f"[no isolated nodes]"
+        )
     for d, c in between:
-        tag = "  [fully connected]" if d == d_full else ""
+        tag = "  [fully connected]" if np.isfinite(d_full) and d == d_full else ""
         rows.append(f"    {d:>14,.1f} m   → {c} components{tag}")
 
     return "\n".join(header + rows)
@@ -821,6 +882,7 @@ def run_diagnostics(
     N: int,
     n_edges: int,
     dense_edge_ratio: float,
+    n_isolated_nodes: int,
     cases_stats: pd.DataFrame,
     deaths_stats: pd.DataFrame,
     spike_counties: list[str],
@@ -834,24 +896,33 @@ def run_diagnostics(
     """
     findings: list[str] = []
 
-    # 1. Graph scale — an N×N dense adjacency costs 4·N² bytes (fp32) and
-    # most message-passing layers scale with |E|. With ~3k counties this
-    # gives ~9M directed edges, ~36 MB adjacency, quadratic memory during
-    # fitting. This is the motivation for the cutoff analysis above.
-    if N > 1000:
+    # 1. Graph scale — most message-passing layers scale with |E|. Report
+    # the actual edge count and average undirected degree; flag densities
+    # above 0.9 (~complete graph) and flag scale problems only if the
+    # graph is dense enough that training will blow up.
+    avg_undir_deg = (n_edges / 2.0) / max(N, 1)
+    if dense_edge_ratio > 0.9:
         findings.append(
-            f"[!] N={N} counties with a fully connected graph → "
-            f"{n_edges:,} directed edges. Many GNN backbones will OOM or "
-            "run very slowly. Apply a distance cutoff before training."
+            f"[!] N={N} counties with ~complete graph "
+            f"(density {dense_edge_ratio:.2%}, {n_edges:,} directed edges). "
+            "Neighbour-mean features are just global means; apply a "
+            "distance cutoff before training."
+        )
+    elif N > 1000:
+        findings.append(
+            f"[ok] N={N} counties, {n_edges:,} directed edges "
+            f"(avg undirected degree {avg_undir_deg:.1f}, density "
+            f"{dense_edge_ratio:.2%}). Graph scale is manageable."
         )
     else:
         findings.append(f"[ok] N={N} counties; graph scale is manageable.")
 
-    if dense_edge_ratio > 0.9:
+    if n_isolated_nodes > 0:
         findings.append(
-            f"[!] Edge density {dense_edge_ratio:.2%} — graph is ~complete; "
-            "without a cutoff, neighbour-mean features are just global "
-            "means and the graph carries almost no inductive bias."
+            f"[!] {n_isolated_nodes} counties have no edges at the current "
+            "distance cutoff (e.g. Hawaii, Puerto Rico). Their adjacency "
+            "row/column is zero, so GNN layers cannot use spatial signal "
+            "for them — they train as pure per-node temporal models."
         )
 
     # 2. NYC synthetic FIPS — worth surfacing because the '99999' code and

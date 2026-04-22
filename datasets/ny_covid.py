@@ -28,6 +28,15 @@ SMOOTH_WINDOW = 7
 # 14-day lag: cases at t-14 are aligned with deaths at t (epidemiological
 # lag between infection reporting and death).
 CASES_LAG_DAYS = 14
+# Distance cutoff for the county adjacency graph (haversine, metres).
+# 150 km was chosen from the isolated-node / connected-component sweep in
+# examples/ny_covid_explore.py: it keeps the fraction of isolated nodes
+# under ~0.5% (17/3212 counties — mostly offshore territories like Hawaii
+# and Puerto Rico) while cutting the edge count by roughly two orders of
+# magnitude relative to the fully connected graph. Counties beyond this
+# distance from every other county are emitted with no edges, which the
+# adjacency-matrix builder already handles as a zero row/column.
+EDGE_DISTANCE_CUTOFF_M = 150_000.0
 
 # Target (deaths) is listed first so model wrappers that slice std[:D_out]
 # and assume the target is the first feature column work correctly.
@@ -78,8 +87,9 @@ class NYCovidLoader(DatasetLoader):
                 "epidemiological lag between cases and deaths. The first 14 "
                 "days of deaths and the last 14 days of cases are cut so "
                 "every retained row has both aligned signals. Target: "
-                "new_deaths_smooth. Edges: fully connected, weighted by "
-                "haversine distance."
+                "new_deaths_smooth. Edges: haversine distance with a "
+                f"{EDGE_DISTANCE_CUTOFF_M / 1000:.0f} km cutoff (isolated "
+                "counties keep zero edges)."
             ),
         )
 
@@ -252,7 +262,14 @@ class NYCovidLoader(DatasetLoader):
     def _compute_edges(
         coords: pd.DataFrame, all_fips: list[int]
     ) -> pd.DataFrame:
-        """Compute symmetric haversine distance edges between all counties."""
+        """Compute symmetric haversine distance edges, keeping only pairs
+        within ``EDGE_DISTANCE_CUTOFF_M`` (inclusive).
+
+        Counties whose nearest neighbour is beyond the cutoff (e.g., Hawaii,
+        Puerto Rico) contribute no edges. The adjacency matrix builder
+        treats missing edges as zero, so isolated nodes simply have a zero
+        row/column.
+        """
         county_coords = (
             coords[coords["fips"].isin(all_fips)]
             .copy()
@@ -263,10 +280,11 @@ class NYCovidLoader(DatasetLoader):
         rows_list: list[tuple[str, str, float]] = []
         records = county_coords.to_dict("records")
         for a, b in combinations(records, 2):
+            dist_m = haversine_distance(a["lat"], a["lon"], b["lat"], b["lon"])
+            if dist_m > EDGE_DISTANCE_CUTOFF_M:
+                continue
+            dist = round(dist_m, 1)
             fa, fb = str(int(a["fips"])), str(int(b["fips"]))
-            dist = round(
-                haversine_distance(a["lat"], a["lon"], b["lat"], b["lon"]), 1
-            )
             rows_list.append((fa, fb, dist))
             rows_list.append((fb, fa, dist))
 
