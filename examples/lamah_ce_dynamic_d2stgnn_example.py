@@ -17,9 +17,18 @@ Dataset:
 
 Note:
     D2STGNN *does* use the supplied river-network adjacency (via
-    doubletransition).  This combines well with its dynamic graph learning.
+    doubletransition). This combines well with its dynamic graph
+    learning.
 
-Grid is 2 x 3 x 3 = 18 trials.
+Memory notes:
+    Per layer D2STGNN holds (B, T, N, num_hidden) activations and a
+    dynamic-graph scores tensor of shape (B, N, N). With N=859 and
+    batch_size=32 the scores tensor alone is ~95 MB per layer; gradients
+    double that. Dropping ``batch_size`` to 16 and ``num_hidden`` to 16
+    cuts memory roughly 4× and resolves most OOMs on 12 GB cards. If
+    tight, further reduce ``batch_size`` to 8.
+
+Grid is 2 x 2 x 2 = 8 trials (down from 18) to keep the sweep bounded.
 
 Usage:
     python examples/lamah_ce_dynamic_d2stgnn_example.py
@@ -36,13 +45,15 @@ print(f"[example] D2STGNN on {DATASET} — workspace={WORKSPACE}")
 
 base_config = D2STGNNConfig(
     max_epochs=10,
-    batch_size=32,
+    batch_size=16,
     early_stop=5,
+    num_hidden=16,
 )
 
-# D2STGNN-specific search space (2 x 3 x 3 = 18 trials).
+# D2STGNN-specific search space (2 x 2 x 2 = 8 trials).
 # - lr         : D2STGNN's default (2e-3) is higher than GWN/MTGNN
-# - num_hidden : hidden channel width — the main capacity knob
+# - num_hidden : hidden channel width — the main capacity knob;
+#                (B,T,N,C) activation memory is linear in this.
 # - dropout    : regularisation; D2STGNN uses a lower default (0.1)
 tuner = HyperparameterTuner(
     model_factory=lambda: D2STGNNModel(),
@@ -51,12 +62,12 @@ tuner = HyperparameterTuner(
     workspace_dir=WORKSPACE,
     search_space={
         "lr":         Categorical([2e-3, 1e-3]),
-        "num_hidden": Categorical([16, 32, 64]),
-        "dropout":    Categorical([0.1, 0.2, 0.3]),
+        "num_hidden": Categorical([16, 32]),
+        "dropout":    Categorical([0.1, 0.2]),
     },
     strategy="grid",
 )
-print("[example] Starting hyperparameter grid search (18 trials)...")
+print("[example] Starting hyperparameter grid search (8 trials)...")
 tuning_result = tuner.run()
 print("[example] Tuning complete.")
 print(tuning_result.summary())

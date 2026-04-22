@@ -51,6 +51,7 @@ Typical usage::
 
 from __future__ import annotations
 
+import gc
 import itertools
 import random
 import time
@@ -63,6 +64,30 @@ from gnn_benchmark.benchmark import BenchmarkRunner, PreparedDataset
 from gnn_benchmark.core.workspace import DataWorkspace
 from gnn_benchmark.models import BenchmarkModel, TrainingHistory
 from gnn_benchmark.tuning.search_space import Sampler
+
+try:
+    import torch
+    _TORCH_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _TORCH_AVAILABLE = False
+
+
+def _free_trial_state(model: BenchmarkModel | None) -> None:
+    """Release a trial's model and its cached GPU memory.
+
+    Tuning loops accumulate VRAM because each fit() builds a fresh model
+    + optimiser state + pinned DataLoader tensors and Python's GC does
+    not run between trials. For long grids on large graphs (NY COVID
+    with 3212 nodes is the worst offender) this is the difference
+    between finishing the sweep and OOM-ing trial 4.
+    """
+    if model is not None:
+        del model
+    gc.collect()
+    if _TORCH_AVAILABLE and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        # ipc_collect is cheap and helps when workers pinned memory.
+        torch.cuda.ipc_collect()
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +318,7 @@ class HyperparameterTuner:
             best_val: float | None = None
             error: str | None = None
 
+            model: BenchmarkModel | None = None
             try:
                 model = self.model_factory()
                 history = model.fit(
@@ -314,6 +340,8 @@ class HyperparameterTuner:
                 error = f"{type(exc).__name__}: {exc}"
                 if self.verbose:
                     traceback.print_exc()
+            finally:
+                _free_trial_state(model)
 
             duration = time.time() - start
             trial = TrialResult(

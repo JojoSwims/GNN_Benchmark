@@ -22,8 +22,29 @@ FIPS_MAP_RAW_URL = (
     "https://raw.githubusercontent.com/josh-byster/fips_lat_long/master/fips_map.json"
 )
 
-_FEATURES = ["new_cases", "new_deaths"]
-_UNITS = {"new_cases": "cases/day", "new_deaths": "deaths/day"}
+# 7-day backward rolling window for smoothing daily noise (weekend/Monday
+# reporting cadence, single-day backfills).
+SMOOTH_WINDOW = 7
+# 14-day lag: cases at t-14 are aligned with deaths at t (epidemiological
+# lag between infection reporting and death).
+CASES_LAG_DAYS = 14
+# Distance cutoff for the county adjacency graph (haversine, metres).
+# 150 km was chosen from the isolated-node / connected-component sweep in
+# examples/ny_covid_explore.py: it keeps the fraction of isolated nodes
+# under ~0.5% (17/3212 counties — mostly offshore territories like Hawaii
+# and Puerto Rico) while cutting the edge count by roughly two orders of
+# magnitude relative to the fully connected graph. Counties beyond this
+# distance from every other county are emitted with no edges, which the
+# adjacency-matrix builder already handles as a zero row/column.
+EDGE_DISTANCE_CUTOFF_M = 150_000.0
+
+# Target (deaths) is listed first so model wrappers that slice std[:D_out]
+# and assume the target is the first feature column work correctly.
+_FEATURES = ["new_deaths_smooth", "new_cases_smooth_lag14"]
+_UNITS = {
+    "new_deaths_smooth": "deaths/day (7-day mean)",
+    "new_cases_smooth_lag14": "cases/day (7-day mean, 14-day lag)",
+}
 
 
 @dataclass
@@ -33,8 +54,11 @@ class NYCovidLoader(DatasetLoader):
 
     Downloads cumulative case and death counts for US counties, geolocated via
     FIPS coordinates, and differences them into daily new cases / new deaths.
-    new_cases is the prediction target, so it is the leading feature column
-    (model wrappers slice std[:D_out] and assume the target is first).
+    Both series are then 7-day backward-smoothed and the cases series is
+    shifted forward by 14 days so that each row pairs deaths at day t with
+    cases from day t-14 (the epidemiological lag). new_deaths_smooth is the
+    prediction target, so it is the leading feature column (model wrappers
+    slice std[:D_out] and assume the target is first).
 
     Node order is determined at download time from the intersection of NYT
     county records and the FIPS coordinate map, stored as sorted FIPS strings,
@@ -53,12 +77,19 @@ class NYCovidLoader(DatasetLoader):
             node_order=list(self._node_order),
             feature_columns=_FEATURES,
             units=_UNITS,
-            window_config=WindowConfig(target_columns=["new_cases"]),
+            window_config=WindowConfig(target_columns=["new_deaths_smooth"]),
             description=(
                 "NYT COVID-19 US county-level daily new cases and deaths, "
                 "Jan 2020 – Mar 2023 (NYT stopped county-level updates on "
-                "2023-03-23). Target: new_cases. Edges: fully connected, "
-                "weighted by haversine distance."
+                "2023-03-23). Both series are smoothed with a 7-day backward "
+                "rolling mean; cases are shifted forward by 14 days so that "
+                "cases_smooth_lag14[t] = smoothed_cases[t-14], mirroring the "
+                "epidemiological lag between cases and deaths. The first 14 "
+                "days of deaths and the last 14 days of cases are cut so "
+                "every retained row has both aligned signals. Target: "
+                "new_deaths_smooth. Edges: haversine distance with a "
+                f"{EDGE_DISTANCE_CUTOFF_M / 1000:.0f} km cutoff (isolated "
+                "counties keep zero edges)."
             ),
         )
 
@@ -151,14 +182,25 @@ class NYCovidLoader(DatasetLoader):
     def _build_series(
         self, merged: pd.DataFrame, all_fips: list[int]
     ) -> pd.DataFrame:
-        """Build densified series panel of daily new cases / new deaths.
+        """Build densified series panel of smoothed, lag-aligned cases/deaths.
 
         NYT reports cumulative counts per county. We reindex onto the full
         daily grid, forward-fill the cumulative within each FIPS (a missing
         report means the cumulative did not change), fill leading gaps with 0
         (pre-first-report days had no cases), then difference per FIPS to get
         daily new counts. Negative deltas from data revisions are clipped to
-        0, so the resulting series is non-negative and NaN-free.
+        0, so the raw daily series is non-negative and NaN-free.
+
+        The daily series is noisy (weekend under-reporting, Monday backfills,
+        single-day data dumps), so we apply a 7-day backward rolling mean per
+        county (min_periods=7 → the first 6 days per county are dropped).
+
+        To predict deaths from cases with a 2-week epidemiological lag, each
+        output row at date t carries the smoothed cases from t-14 alongside
+        the smoothed deaths at t. This drops the first 14 days (no lag source
+        for cases) and effectively drops the last 14 days of cases (they
+        would predict deaths beyond the dataset end). Combined with the
+        6-day smoothing warm-up, the first 20 days of the series are dropped.
         """
         all_dates = pd.date_range(merged["date"].min(), merged["date"].max(), freq="D")
 
@@ -181,25 +223,53 @@ class NYCovidLoader(DatasetLoader):
             .fillna(0.0)
             .clip(lower=0.0)
             .astype(float)
+            .rename(columns={"cases": "new_cases", "deaths": "new_deaths"})
         )
 
-        out = new.reset_index().rename(
-            columns={
-                "date": "ts",
-                "fips": "node_id",
-                "cases": "new_cases",
-                "deaths": "new_deaths",
-            }
+        # Re-shape to (date, fips) long form and sort within each county so
+        # rolling / shift operations respect time order.
+        daily = new.reset_index().rename(columns={"date": "ts", "fips": "node_id"})
+        daily["node_id"] = daily["node_id"].astype(str)
+        daily = daily.sort_values(["node_id", "ts"]).reset_index(drop=True)
+
+        # 7-day backward rolling mean per county. min_periods=7 leaves the
+        # first 6 days per county NaN (user: "ignore this for the first 6 days").
+        def _smooth(s: pd.Series) -> pd.Series:
+            return s.rolling(window=SMOOTH_WINDOW, min_periods=SMOOTH_WINDOW).mean()
+
+        grouped = daily.groupby("node_id", sort=False)
+        daily["new_deaths_smooth"] = grouped["new_deaths"].transform(_smooth)
+        # Shift smoothed cases forward by 14 days so row at date t holds the
+        # smoothed cases from t-14 (still grouped by county).
+        daily["new_cases_smooth_lag14"] = grouped["new_cases"].transform(
+            lambda s: _smooth(s).shift(CASES_LAG_DAYS)
         )
-        out["node_id"] = out["node_id"].astype(str)
-        out = out[["ts", "node_id", "new_cases", "new_deaths"]]
+
+        # Drop rows where either aligned signal is still NaN. In practice
+        # this removes the first 20 days per county (6-day smoothing warm-up
+        # + 14-day lag). The unused tail cases (last 14 days) are simply not
+        # present in the aligned panel.
+        aligned = daily.dropna(
+            subset=["new_deaths_smooth", "new_cases_smooth_lag14"]
+        ).copy()
+
+        out = aligned[
+            ["ts", "node_id", "new_deaths_smooth", "new_cases_smooth_lag14"]
+        ]
         return out.sort_values(["ts", "node_id"]).reset_index(drop=True)
 
     @staticmethod
     def _compute_edges(
         coords: pd.DataFrame, all_fips: list[int]
     ) -> pd.DataFrame:
-        """Compute symmetric haversine distance edges between all counties."""
+        """Compute symmetric haversine distance edges, keeping only pairs
+        within ``EDGE_DISTANCE_CUTOFF_M`` (inclusive).
+
+        Counties whose nearest neighbour is beyond the cutoff (e.g., Hawaii,
+        Puerto Rico) contribute no edges. The adjacency matrix builder
+        treats missing edges as zero, so isolated nodes simply have a zero
+        row/column.
+        """
         county_coords = (
             coords[coords["fips"].isin(all_fips)]
             .copy()
@@ -210,10 +280,11 @@ class NYCovidLoader(DatasetLoader):
         rows_list: list[tuple[str, str, float]] = []
         records = county_coords.to_dict("records")
         for a, b in combinations(records, 2):
+            dist_m = haversine_distance(a["lat"], a["lon"], b["lat"], b["lon"])
+            if dist_m > EDGE_DISTANCE_CUTOFF_M:
+                continue
+            dist = round(dist_m, 1)
             fa, fb = str(int(a["fips"])), str(int(b["fips"]))
-            dist = round(
-                haversine_distance(a["lat"], a["lon"], b["lat"], b["lon"]), 1
-            )
             rows_list.append((fa, fb, dist))
             rows_list.append((fb, fa, dist))
 
