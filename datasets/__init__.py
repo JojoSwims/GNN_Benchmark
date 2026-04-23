@@ -29,6 +29,10 @@ Classes:
     ElergoneLoader: Electricity Load Diagrams dataset (370 clients, 15-min).
         No graph structure provided.
 
+    EULoadLoader: ENTSO-E European zonal electricity load (hourly, MW).
+        Undirected, unweighted cross-zone interconnection edges.
+        Requires `gdown` package for Google Drive download.
+
     NYISOLoader: NYISO Integrated Load dataset (11 regions, hourly).
         No graph structure provided.
 
@@ -70,6 +74,7 @@ from gnn_benchmark.datasets.beijing_air import (
     Cluster2AirLoader,
 )
 from gnn_benchmark.datasets.elergone import ElergoneLoader
+from gnn_benchmark.datasets.eu_load import EULoadLoader
 from gnn_benchmark.datasets.iso import NYISOLoader
 from gnn_benchmark.datasets.melpeds import MelPedsLoader
 from gnn_benchmark.datasets.ny_covid import NYCovidLoader
@@ -87,6 +92,7 @@ __all__ = [
     "Cluster1AirLoader",
     "Cluster2AirLoader",
     "ElergoneLoader",
+    "EULoadLoader",
     "NYISOLoader",
     "NYCovidLoader",
     "MelPedsLoader",
