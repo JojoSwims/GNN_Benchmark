@@ -33,18 +33,30 @@ class IntermediateRepresentation:
         series: pd.DataFrame,
         metadata: IRMetadata,
         edges: pd.DataFrame | None = None,
+        dynamic_edges: pd.DataFrame | None = None,
         workspace: DataWorkspace | None = None,
         dataset_name: str | None = None,
     ):
         self.series = series
         self.metadata = metadata
         self.edges = edges
+        # Snapshot DataFrame with columns [ts, src, dst, cost]. Sparse — only
+        # rows with cost >= 1 are emitted. ts is the window start; bucketing
+        # convention is dataset-specific and documented in metadata.description.
+        self.dynamic_edges = dynamic_edges
         self._workspace = workspace
         self._dataset_name = dataset_name
 
         # Ensure ts column is datetime
         if not pd.api.types.is_datetime64_any_dtype(self.series["ts"]):
             self.series["ts"] = pd.to_datetime(self.series["ts"])
+
+        if (
+            self.dynamic_edges is not None
+            and "ts" in self.dynamic_edges.columns
+            and not pd.api.types.is_datetime64_any_dtype(self.dynamic_edges["ts"])
+        ):
+            self.dynamic_edges["ts"] = pd.to_datetime(self.dynamic_edges["ts"])
 
     # --- Properties ---
 
@@ -113,6 +125,46 @@ class IntermediateRepresentation:
                         tensor[t_idx, n_idx, c_idx] = row[col]
 
         return tensor
+
+    def get_dynamic_adjacency_snapshot(
+        self, ts: pd.Timestamp, default_diagonal: float = 0.0
+    ) -> np.ndarray:
+        """
+        Return (N, N) adjacency for the dynamic-edge snapshot at `ts`.
+
+        Uses the same node_order as get_adjacency_matrix() so indexing aligns.
+        Zero where no edge exists at that snapshot.
+
+        Args:
+            ts: Snapshot timestamp (window start). Must match a value in
+                ``self.dynamic_edges["ts"]``.
+            default_diagonal: Value for diagonal entries (default 0.0).
+
+        Returns:
+            NxN numpy array of edge costs for the requested snapshot.
+
+        Raises:
+            ValueError: If no dynamic edges are defined.
+        """
+        if self.dynamic_edges is None:
+            raise ValueError("No dynamic edges defined for this IR")
+
+        nodes = self.nodes
+        N = len(nodes)
+        node_to_idx = {str(n): i for i, n in enumerate(nodes)}
+
+        adj = np.zeros((N, N), dtype=np.float32)
+        np.fill_diagonal(adj, default_diagonal)
+
+        ts = pd.Timestamp(ts)
+        slice_df = self.dynamic_edges[self.dynamic_edges["ts"] == ts]
+        for _, row in slice_df.iterrows():
+            src_idx = node_to_idx.get(str(row["src"]))
+            dst_idx = node_to_idx.get(str(row["dst"]))
+            if src_idx is not None and dst_idx is not None:
+                adj[src_idx, dst_idx] = float(row["cost"])
+
+        return adj
 
     def get_adjacency_matrix(self, default_diagonal: float = 0.0) -> np.ndarray:
         """
@@ -204,6 +256,10 @@ class IntermediateRepresentation:
         if self.edges is not None:
             self.edges.to_csv(path / "edges.csv", index=False)
 
+        # Save dynamic edges (snapshot-per-row) if present
+        if self.dynamic_edges is not None:
+            self.dynamic_edges.to_csv(path / "dynamic_edges.csv", index=False)
+
         # Save metadata
         with open(path / "metadata.json", "w") as f:
             json.dump(self.metadata.to_dict(), f, indent=2)
@@ -246,10 +302,20 @@ class IntermediateRepresentation:
             edges["src"] = edges["src"].astype(str)
             edges["dst"] = edges["dst"].astype(str)
 
+        # Load dynamic edges if present
+        dynamic_edges = None
+        if (path / "dynamic_edges.csv").exists():
+            dynamic_edges = pd.read_csv(
+                path / "dynamic_edges.csv", parse_dates=["ts"]
+            )
+            dynamic_edges["src"] = dynamic_edges["src"].astype(str)
+            dynamic_edges["dst"] = dynamic_edges["dst"].astype(str)
+
         return cls(
             series=series,
             metadata=metadata,
             edges=edges,
+            dynamic_edges=dynamic_edges,
             workspace=workspace,
             dataset_name=dataset_name,
         )

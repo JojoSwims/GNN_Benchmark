@@ -58,6 +58,11 @@ Classes:
         verbal/material conflict, Goldstein scale, tone, etc.). Edges from
         UNGA voting similarity (Voeten Dataverse) or geographic centroid
         proximity over the same node set.
+
+    DivvyBikeshareLoader: Divvy Chicago bikeshare, March 2021 (677 stations,
+        hourly). Node features: departures, arrivals, member_ratio. Static
+        fully-connected haversine graph. Hourly directed trip-count dynamic
+        graph bucketed by trip end-time (selectable via ``edges_mode``).
 Example:
     >>> from gnn_benchmark import DataWorkspace
     >>> from gnn_benchmark.datasets import BeijingAirLoader, Cluster1AirLoader
@@ -84,6 +89,7 @@ from gnn_benchmark.datasets.lamah_ce_dynamic import LamaHCEDynamicLoader
 from gnn_benchmark.datasets.pems_volume import PEMS04Loader, PEMS08Loader
 from gnn_benchmark.datasets.noaa_buoy import NOAABuoyLoader
 from gnn_benchmark.datasets.gdelt_protests import GDELTProtestLoader
+from gnn_benchmark.datasets.divvy_bikeshare import DivvyBikeshareLoader
 
 
 __all__ = [
@@ -104,4 +110,5 @@ __all__ = [
     "LamaHCELoader",
     "LamaHCEDynamicLoader",
     "GDELTProtestLoader",
+    "DivvyBikeshareLoader",
 ]
