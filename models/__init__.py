@@ -26,6 +26,7 @@ from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
 from gnn_benchmark.models.gwn import GWNConfig, GWNModel
 from gnn_benchmark.models.last_value import LastValueModel
 from gnn_benchmark.models.mtgnn import MTGNNConfig, MTGNNModel
+from gnn_benchmark.models.mtgode import MTGODEConfig, MTGODEModel
 from gnn_benchmark.models.staeformer import STAEFormerConfig, STAEFormerModel
 from gnn_benchmark.models.d2stgnn import D2STGNNConfig, D2STGNNModel
 from gnn_benchmark.models.gts import GTSConfig, GTSModel
@@ -40,6 +41,8 @@ __all__ = [
     "GWNConfig",
     "MTGNNModel",
     "MTGNNConfig",
+    "MTGODEModel",
+    "MTGODEConfig",
     "D2STGNNModel",
     "D2STGNNConfig",
     "GTSModel",
