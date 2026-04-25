@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Run MTGNN on the EU load dataset (no hyperparameter tuning).
+"""Tune MTGNN on the EU load dataset, then report test metrics.
+
+Pipeline:
+    1. Run a grid search over MTGNN-specific hyperparameters, scored by
+       validation loss.  The test set is NOT seen during this phase.
+    2. Take the winning config and run the standard benchmark pipeline once
+       for an unbiased test-set evaluation.
 
 Dataset:
     ENTSO-E European zonal electricity load (hourly, 2023-2024).  49 nodes
@@ -7,15 +13,10 @@ Dataset:
     Edges are undirected, unweighted cross-zone interconnections.  Loader
     auto-downloads both files from Google Drive on first use.
 
-Hyperparameters (no grid search):
-    Sticking with MTGNN's defaults — for a 49-node graph with a single
-    feature, the default conv_channels=32 is sufficient and 1e-3 lr /
-    0.3 dropout converge cleanly.  Only the training-budget knobs
-    (max_epochs, batch_size, early_stop) are touched: max_epochs is
-    bumped to 50 since we run a single trial instead of a grid.
-
 Note:
     MTGNN learns its own graph and ignores the supplied adjacency.
+
+Grid is 2 x 3 x 3 = 18 trials.
 
 Usage:
     python examples/eu_load_mtgnn_example.py
@@ -23,21 +24,45 @@ Usage:
 
 from gnn_benchmark.benchmark import BenchmarkRunner
 from gnn_benchmark.models import MTGNNConfig, MTGNNModel
+from gnn_benchmark.tuning import Categorical, HyperparameterTuner
 
 WORKSPACE = "./benchmark_workspace"
 DATASET = "eu-load"
 
 print(f"[example] MTGNN on {DATASET} — workspace={WORKSPACE}")
 
-config = MTGNNConfig(
-    lr=1e-3,
-    conv_channels=32,
-    dropout=0.3,
-    batch_size=64,
-    max_epochs=50,
-    early_stop=10,
+base_config = MTGNNConfig(
+    max_epochs=10,
+    batch_size=32,
+    early_stop=5,
 )
 
-runner = BenchmarkRunner(workspace_dir=WORKSPACE, datasets=[DATASET])
-result = runner.run(MTGNNModel(), config=config)
-print(result.summary())
+# MTGNN-specific search space (2 x 3 x 3 = 18 trials).
+# - lr            : training signal (log-scale pair)
+# - conv_channels : width of the core TCN/GCN stack — the main capacity knob
+# - dropout       : regularisation
+tuner = HyperparameterTuner(
+    model_factory=lambda: MTGNNModel(),
+    base_config=base_config,
+    dataset_key=DATASET,
+    workspace_dir=WORKSPACE,
+    search_space={
+        "lr":            Categorical([1e-3, 5e-4]),
+        "conv_channels": Categorical([16, 32, 64]),
+        "dropout":       Categorical([0.1, 0.3, 0.5]),
+    },
+    strategy="grid",
+)
+print("[example] Starting hyperparameter grid search (18 trials)...")
+tuning_result = tuner.run()
+print("[example] Tuning complete.")
+print(tuning_result.summary())
+
+if tuning_result.best is not None:
+    print("[example] Running final evaluation on test set with best config...")
+    runner = BenchmarkRunner(workspace_dir=WORKSPACE, datasets=[DATASET])
+    final = runner.run(MTGNNModel(), config=tuning_result.best.config)
+    print("[example] Final evaluation complete.")
+    print(final.summary())
+else:
+    print("No successful trials — skipping final evaluation.")

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Run STAEFormer on the EU load dataset (no hyperparameter tuning).
+"""Tune STAEFormer on the EU load dataset, then report test metrics.
+
+Pipeline:
+    1. Run a grid search over STAEFormer-specific hyperparameters, scored
+       by validation loss.  The test set is NOT seen during this phase.
+    2. Take the winning config and run the standard benchmark pipeline
+       once for an unbiased test-set evaluation.
 
 Dataset:
     ENTSO-E European zonal electricity load (hourly, 2023-2024).  49 nodes
@@ -7,18 +13,14 @@ Dataset:
     Edges are undirected, unweighted cross-zone interconnections.  Loader
     auto-downloads both files from Google Drive on first use.
 
-Hyperparameters (no grid search):
-    Sticking with STAEFormer's defaults — for a 49-node graph with a
-    single feature, the default num_layers=3 / num_heads=4 transformer
-    is well-sized.  num_heads must divide model_dim; with this wrapper
-    model_dim = input_embedding_dim (24) + adaptive_embedding_dim (80)
-    = 104, and 4 divides 104.  Only the training-budget knobs
-    (max_epochs, batch_size, early_stop) are touched: max_epochs is
-    bumped to 50 since we run a single trial instead of a grid.
+Note on num_heads: in this wrapper tod/dow/spatial embedding dims are 0,
+so model_dim = input_embedding_dim (24) + adaptive_embedding_dim (80) =
+104.  num_heads must divide 104, which is why we search {2, 4, 8}.
 
-Note:
-    STAEFormer does not use the supplied graph — the transformer +
-    adaptive embedding ignore ``adj``.
+STAEFormer does not use the supplied graph — the transformer + adaptive
+embedding ignore `adj`.
+
+Grid is 2 x 3 x 3 = 18 trials.
 
 Usage:
     python examples/eu_load_staeformer_example.py
@@ -26,22 +28,45 @@ Usage:
 
 from gnn_benchmark.benchmark import BenchmarkRunner
 from gnn_benchmark.models import STAEFormerConfig, STAEFormerModel
+from gnn_benchmark.tuning import Categorical, HyperparameterTuner
 
 WORKSPACE = "./benchmark_workspace"
 DATASET = "eu-load"
 
 print(f"[example] STAEFormer on {DATASET} — workspace={WORKSPACE}")
 
-config = STAEFormerConfig(
-    lr=1e-3,
-    num_layers=3,
-    num_heads=4,
-    dropout=0.1,
+base_config = STAEFormerConfig(
+    max_epochs=10,
     batch_size=16,
-    max_epochs=50,
-    early_stop=10,
+    early_stop=5,
 )
 
-runner = BenchmarkRunner(workspace_dir=WORKSPACE, datasets=[DATASET])
-result = runner.run(STAEFormerModel(), config=config)
-print(result.summary())
+# STAEFormer-specific search space (2 x 3 x 3 = 18 trials).
+# - lr         : training signal (log-scale pair)
+# - num_layers : transformer depth — the main capacity knob
+# - num_heads  : attention heads; all values must divide model_dim (104)
+tuner = HyperparameterTuner(
+    model_factory=lambda: STAEFormerModel(),
+    base_config=base_config,
+    dataset_key=DATASET,
+    workspace_dir=WORKSPACE,
+    search_space={
+        "lr":         Categorical([1e-3, 5e-4]),
+        "num_layers": Categorical([2, 3, 4]),
+        "num_heads":  Categorical([2, 4, 8]),
+    },
+    strategy="grid",
+)
+print("[example] Starting hyperparameter grid search (18 trials)...")
+tuning_result = tuner.run()
+print("[example] Tuning complete.")
+print(tuning_result.summary())
+
+if tuning_result.best is not None:
+    print("[example] Running final evaluation on test set with best config...")
+    runner = BenchmarkRunner(workspace_dir=WORKSPACE, datasets=[DATASET])
+    final = runner.run(STAEFormerModel(), config=tuning_result.best.config)
+    print("[example] Final evaluation complete.")
+    print(final.summary())
+else:
+    print("No successful trials — skipping final evaluation.")
