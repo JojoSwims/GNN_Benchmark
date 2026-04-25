@@ -13,6 +13,7 @@ packages = [
     "gnn_benchmark.core",
     "gnn_benchmark.datasets",
     "gnn_benchmark.models",
+    "gnn_benchmark.models.MTGODE",
     "gnn_benchmark.models.STAEFormer",
     "gnn_benchmark.models.STAEFormer.model",
     "gnn_benchmark.tuning",
