@@ -142,6 +142,13 @@ class DataWorkspace:
             # Download and convert
             series_df, edges_df = loader.download_and_convert()
 
+            # Optional dynamic-edges hook. Loaders opt in by defining
+            # build_dynamic_edges(); default base class does not.
+            dynamic_edges_df = None
+            build_dyn = getattr(loader, "build_dynamic_edges", None)
+            if callable(build_dyn):
+                dynamic_edges_df = build_dyn()
+
             # Create metadata from loader info
             from gnn_benchmark.core.types import IRMetadata
 
@@ -159,6 +166,7 @@ class DataWorkspace:
                 series=series_df,
                 metadata=metadata,
                 edges=edges_df,
+                dynamic_edges=dynamic_edges_df,
                 workspace=self,
                 dataset_name=dataset_name,
             )
