@@ -37,13 +37,16 @@ result = runner.run(LastValueModel())
 print(result.summary())
 ```
 
-See [`examples/basic_example.py`](examples/basic_example.py) for a runnable example.
+See [`examples_old/basic_example.py`](examples_old/basic_example.py) for a runnable example.
 
-Model-specific Beijing Air examples (including config overrides):
-- [`examples/beijing_air_gwn_example.py`](examples/beijing_air_gwn_example.py)
-- [`examples/beijing_air_mtgnn_example.py`](examples/beijing_air_mtgnn_example.py)
-- [`examples/beijing_air_staeformer_example.py`](examples/beijing_air_staeformer_example.py)
-- [`examples/beijing_air_d2stgnn_example.py`](examples/beijing_air_d2stgnn_example.py)
+Model × dataset hyperparameter-tuning examples live in [`examples_new/`](examples_new/),
+which holds one example per (model, dataset) pair across the 7 wrapped models
+(GWN, MTGNN, D2STGNN, STAEFormer, ASTGCN, GTS, MTGODE) and 5 benchmark datasets
+(NOAA buoys, EU load, LamaH-CE dynamic, NYC COVID, Chicago / Divvy bikeshare).
+Every example uses a shared protocol (random search, `n_trials=12`, common
+`lr` range, identical training schedule per dataset) so results are comparable
+across models. Older one-off / ad-hoc grids live under
+[`examples_old/`](examples_old/).
 
 ## Model Contract
 
