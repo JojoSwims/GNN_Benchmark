@@ -21,19 +21,25 @@ Earlier examples (now under ``examples_old/``) had a few fairness problems:
     winner outside `{1e-3, 5e-4}`.
   * **Per-dataset memory tweaks were scattered across files** with no single
     source of truth — easy for two examples on the same dataset to drift.
-  * **Search-space *shape* differed across models** (e.g. STAEFormer tuned
-    depth + heads while everyone else tuned width + dropout).
+  * **Identical search-space *shape* across models risked missing knobs
+    that are hugely influential for specific architectures** (e.g. ASTGCN's
+    Chebyshev order ``K``, GWN's ``addaptadj`` toggle, MTGODE's ODE step).
+    Leaving such knobs at a fixed default lets a poor original choice
+    cascade into a bad cross-model result.
 
 Fair protocol used here
 -----------------------
-  * **Random search, n_trials=12, seed=0** for every (model, dataset) pair.
+  * **Random search, n_trials=18, seed=0** for every (model, dataset) pair.
   * **Training schedule depends only on the dataset** (memory budget):
     `batch_size`, `max_epochs`, `early_stop`, and `lr_milestones` are pinned
     in :data:`DATASET_SCHEDULE`, not in any single example.
-  * **Search space has the same shape for every model**: `lr` (LogUniform
-    1e-4..5e-3), one regularization knob (`dropout` where the model has it,
-    `weight_decay` for ASTGCN/GTS which don't), and one capacity axis (the
-    model's principal width parameter).
+  * **Search space is per-model**: every example uses the model's default
+    factory in :mod:`gnn_benchmark.tuning.spaces` — ``lr`` (log-uniform,
+    same range for every model), one shared regularization axis
+    (``dropout`` or ``weight_decay`` depending on what the model exposes),
+    one capacity axis, plus 1-2 model-specific high-impact knobs.
+    Dataset-specific overrides (memory caps) are applied via the
+    factory's ``**overrides``, so each example is one factory call.
   * **`lr` is sampled log-uniform**, the natural distribution for LR search.
 
 Limits we don't claim to solve
@@ -56,7 +62,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 WORKSPACE = "./benchmark_workspace"
-N_TRIALS = 12
+N_TRIALS = 18
 SEED = 0
 STRATEGY = "random"
 

@@ -9,6 +9,10 @@ Public entry points:
 - :class:`Categorical`, :class:`IntUniform`, :class:`Uniform`,
   :class:`LogUniform` — search-space primitives, shaped to match Optuna's
   ``trial.suggest_*`` API.
+- ``gnn_benchmark.tuning.spaces`` — per-model default search-space
+  factories (``gwn_search_space``, ``mtgnn_search_space``, …).  Each
+  factory returns a fresh dict and accepts ``**overrides`` for
+  per-dataset capping.
 """
 
 from gnn_benchmark.tuning.search_space import (
@@ -17,6 +21,17 @@ from gnn_benchmark.tuning.search_space import (
     LogUniform,
     Sampler,
     Uniform,
+)
+from gnn_benchmark.tuning.spaces import (
+    DEFAULT_LR_HIGH,
+    DEFAULT_LR_LOW,
+    astgcn_search_space,
+    d2stgnn_search_space,
+    gts_search_space,
+    gwn_search_space,
+    mtgnn_search_space,
+    mtgode_search_space,
+    staeformer_search_space,
 )
 from gnn_benchmark.tuning.tuner import (
     HyperparameterTuner,
@@ -33,4 +48,13 @@ __all__ = [
     "IntUniform",
     "Uniform",
     "LogUniform",
+    "DEFAULT_LR_LOW",
+    "DEFAULT_LR_HIGH",
+    "gwn_search_space",
+    "mtgnn_search_space",
+    "gts_search_space",
+    "d2stgnn_search_space",
+    "astgcn_search_space",
+    "staeformer_search_space",
+    "mtgode_search_space",
 ]
