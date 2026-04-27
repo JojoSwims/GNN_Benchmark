@@ -27,6 +27,20 @@ from torch.utils.data import DataLoader, TensorDataset
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
 from gnn_benchmark.models.MTGNN.net import gtnet
 from gnn_benchmark.utils.losses import masked_huber_loss
+from gnn_benchmark.utils.timing import Stopwatch
+
+
+def _fit_feature_scaler(
+    tensor: torch.Tensor, feature_dim: int, device: torch.device
+) -> "_FeatureScaler":
+    """NaN-aware per-feature z-score scaler fit (used for both x and y)."""
+    flat = tensor.reshape(-1, feature_dim)
+    mean = torch.nanmean(flat, dim=0)
+    diff_sq = (flat - mean) ** 2
+    count = (~torch.isnan(flat)).sum(dim=0).float()
+    std = torch.sqrt(torch.nansum(diff_sq, dim=0) / count)
+    std = torch.clamp(std, min=1e-8)
+    return _FeatureScaler(mean, std).to(device)
 
 
 # ---------------------------------------------------------------------------
@@ -45,10 +59,11 @@ class MTGNNConfig:
     # Training hyper-parameters
     lr: float = 0.001
     weight_decay: float = 0.0001
+    eps: float = 1e-8                        # Adam epsilon
     batch_size: int = 64
     max_epochs: int = 100
     early_stop: int = 30
-    clip_grad: float = 5.0
+    clip_grad: float | None = 5.0            # gradient-norm clip; None disables
 
     # Architecture (paper defaults for multi-step forecasting)
     gcn_true: bool = True
@@ -147,10 +162,13 @@ class MTGNNModel(BenchmarkModel):
     def __init__(self) -> None:
         self._model: gtnet | None = None
         self._scaler: _FeatureScaler | None = None
+        self._y_scaler: _FeatureScaler | None = None
         self._device: torch.device | None = None
         self._cfg: MTGNNConfig | None = None
         self._out_steps: int | None = None
         self._output_dim: int | None = None
+        self._train_compute_sec: float = 0.0
+        self._infer_compute_sec: float = 0.0
 
     # ---- BenchmarkModel interface ----------------------------------------
 
@@ -185,15 +203,13 @@ class MTGNNModel(BenchmarkModel):
         self._out_steps = out_steps
         self._output_dim = output_dim
 
-        # -- Fit scaler on x_train (per-feature, ignoring NaN) -------------
-        flat = x_train.reshape(-1, input_dim)  # (S*T*N, D)
-        mean = torch.nanmean(flat, dim=0)      # (D,)
-        diff_sq = (flat - mean) ** 2
-        count = (~torch.isnan(flat)).sum(dim=0).float()
-        std = torch.sqrt(torch.nansum(diff_sq, dim=0) / count)
-        std = torch.clamp(std, min=1e-8)
-        scaler = _FeatureScaler(mean, std).to(device)
+        # -- Fit scalers (per-feature z-score, NaN-aware) ------------------
+        # Separate y-scaler so inverse_transform uses target stats and
+        # never silently relies on "first D_out features are the targets".
+        scaler = _fit_feature_scaler(x_train, input_dim, device)
+        y_scaler = _fit_feature_scaler(y_train, output_dim, device)
         self._scaler = scaler
+        self._y_scaler = y_scaler
 
         # -- Normalize x and handle NaN ------------------------------------
         x_train_n = torch.nan_to_num(scaler.transform(x_train.to(device)))
@@ -225,7 +241,11 @@ class MTGNNModel(BenchmarkModel):
             predefined_A=None,
             static_feat=None,
             dropout=cfg.dropout,
-            subgraph_size=min(cfg.subgraph_size, num_nodes),
+            # `subgraph_size` is the top-k neighbours per node inside MTGNN's
+            # graph constructor, so it cannot exceed `num_nodes - 1`
+            # (a node's top-k must exclude itself). Tune this hyperparameter
+            # per dataset — 20 is the paper default for ~200-node graphs.
+            subgraph_size=min(cfg.subgraph_size, max(num_nodes - 1, 1)),
             node_dim=cfg.node_dim,
             dilation_exponential=cfg.dilation_exponential,
             conv_channels=cfg.conv_channels,
@@ -244,7 +264,10 @@ class MTGNNModel(BenchmarkModel):
         # -- Training setup ------------------------------------------------
         criterion = masked_huber_loss
         optimizer = torch.optim.Adam(
-            model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
+            model.parameters(),
+            lr=cfg.lr,
+            weight_decay=cfg.weight_decay,
+            eps=cfg.eps,
         )
         scheduler = None
         if cfg.use_lr_scheduler:
@@ -255,6 +278,7 @@ class MTGNNModel(BenchmarkModel):
             )
 
         # -- Training loop -------------------------------------------------
+        train_sw = Stopwatch()
         train_losses: list[float] = []
         val_losses: list[float] = []
         best_val_loss = float("inf")
@@ -266,26 +290,29 @@ class MTGNNModel(BenchmarkModel):
             model.train()
             batch_losses: list[float] = []
             for x_batch, y_batch in train_loader:
-                # x_batch: (B, T, N, D) -> (B, D, N, T) for gtnet
-                x_in = x_batch.permute(0, 3, 2, 1)
-                out = model(x_in)  # (B, out_steps*output_dim, N, 1)
-                out = (
-                    out.squeeze(-1)
-                    .reshape(-1, out_steps, output_dim, num_nodes)
-                    .permute(0, 1, 3, 2)
-                )  # (B, out_steps, N, output_dim)
-                out = scaler.inverse_transform(out)
-                loss = criterion(out, y_batch)
+                with train_sw:
+                    # x_batch: (B, T, N, D) -> (B, D, N, T) for gtnet
+                    x_in = x_batch.permute(0, 3, 2, 1)
+                    out = model(x_in)  # (B, out_steps*output_dim, N, 1)
+                    out = (
+                        out.squeeze(-1)
+                        .reshape(-1, out_steps, output_dim, num_nodes)
+                        .permute(0, 1, 3, 2)
+                    )  # (B, out_steps, N, output_dim)
+                    out = y_scaler.inverse_transform(out)
+                    loss = criterion(out, y_batch)
 
-                optimizer.zero_grad()
-                loss.backward()
-                if cfg.clip_grad:
-                    nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad)
-                optimizer.step()
-                batch_losses.append(loss.item())
+                    optimizer.zero_grad()
+                    loss.backward()
+                    if cfg.clip_grad:
+                        nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad)
+                    optimizer.step()
+                    batch_loss = loss.item()
+                batch_losses.append(batch_loss)
 
-            if scheduler is not None:
-                scheduler.step()
+            with train_sw:
+                if scheduler is not None:
+                    scheduler.step()
             train_losses.append(float(np.mean(batch_losses)))
 
             # ---- validate ----
@@ -293,16 +320,18 @@ class MTGNNModel(BenchmarkModel):
             batch_losses_val: list[float] = []
             with torch.no_grad():
                 for x_batch, y_batch in val_loader:
-                    x_in = x_batch.permute(0, 3, 2, 1)
-                    out = model(x_in)
-                    out = (
-                        out.squeeze(-1)
-                        .reshape(-1, out_steps, output_dim, num_nodes)
-                        .permute(0, 1, 3, 2)
-                    )
-                    out = scaler.inverse_transform(out)
-                    loss = criterion(out, y_batch)
-                    batch_losses_val.append(loss.item())
+                    with train_sw:
+                        x_in = x_batch.permute(0, 3, 2, 1)
+                        out = model(x_in)
+                        out = (
+                            out.squeeze(-1)
+                            .reshape(-1, out_steps, output_dim, num_nodes)
+                            .permute(0, 1, 3, 2)
+                        )
+                        out = y_scaler.inverse_transform(out)
+                        loss = criterion(out, y_batch)
+                        batch_loss = loss.item()
+                    batch_losses_val.append(batch_loss)
             val_loss = float(np.mean(batch_losses_val))
             val_losses.append(val_loss)
 
@@ -319,6 +348,7 @@ class MTGNNModel(BenchmarkModel):
         if best_state is not None:
             model.load_state_dict(best_state)
         self._model = model
+        self._train_compute_sec = train_sw.elapsed
 
         return TrainingHistory(train_loss=train_losses, val_loss=val_losses)
 
@@ -328,12 +358,13 @@ class MTGNNModel(BenchmarkModel):
         adj: np.ndarray | None,
         config: Any,
     ) -> np.ndarray:
-        if self._model is None or self._scaler is None:
+        if self._model is None or self._scaler is None or self._y_scaler is None:
             raise RuntimeError("Call fit() before predict().")
 
         cfg = _resolve_config(config)
         device = self._device
         scaler = self._scaler
+        y_scaler = self._y_scaler
         model = self._model
         out_steps = self._out_steps
         output_dim = self._output_dim
@@ -347,23 +378,33 @@ class MTGNNModel(BenchmarkModel):
             shuffle=False,
         )
 
+        infer_sw = Stopwatch()
         model.eval()
         preds: list[np.ndarray] = []
         with torch.no_grad():
             for (x_batch,) in loader:
-                x_in = x_batch.permute(0, 3, 2, 1)
-                out = model(x_in)
-                out = (
-                    out.squeeze(-1)
-                    .reshape(-1, out_steps, output_dim, num_nodes)
-                    .permute(0, 1, 3, 2)
-                )
-                out = scaler.inverse_transform(out)
-                preds.append(out.cpu().numpy())
+                with infer_sw:
+                    x_in = x_batch.permute(0, 3, 2, 1)
+                    out = model(x_in)
+                    out = (
+                        out.squeeze(-1)
+                        .reshape(-1, out_steps, output_dim, num_nodes)
+                        .permute(0, 1, 3, 2)
+                    )
+                    out = y_scaler.inverse_transform(out)
+                    out_cpu = out.cpu().numpy()
+                preds.append(out_cpu)
 
+        self._infer_compute_sec = infer_sw.elapsed
         return np.concatenate(preds, axis=0)
 
     def get_config(self) -> dict:
         if self._cfg is None:
             return {}
         return asdict(self._cfg)
+
+    def get_train_compute_sec(self) -> float | None:
+        return self._train_compute_sec or None
+
+    def get_inference_compute_sec(self) -> float | None:
+        return self._infer_compute_sec or None

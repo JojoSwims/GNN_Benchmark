@@ -27,6 +27,20 @@ from torch.utils.data import DataLoader, TensorDataset
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
 from gnn_benchmark.models.GTS.model import GTSModel as _GTSNet
 from gnn_benchmark.utils.losses import masked_huber_loss
+from gnn_benchmark.utils.timing import Stopwatch
+
+
+def _fit_feature_scaler(
+    tensor: torch.Tensor, feature_dim: int, device: torch.device
+) -> "_FeatureScaler":
+    """NaN-aware per-feature z-score scaler fit (used for both x and y)."""
+    flat = tensor.reshape(-1, feature_dim)
+    mean = torch.nanmean(flat, dim=0)
+    diff_sq = (flat - mean) ** 2
+    count = (~torch.isnan(flat)).sum(dim=0).float()
+    std = torch.sqrt(torch.nansum(diff_sq, dim=0) / count)
+    std = torch.clamp(std, min=1e-8)
+    return _FeatureScaler(mean, std).to(device)
 
 
 # ---------------------------------------------------------------------------
@@ -44,11 +58,12 @@ class GTSConfig:
 
     # Training hyper-parameters
     lr: float = 0.005
-    eps: float = 1e-3
+    weight_decay: float = 0.0
+    eps: float = 1e-3                        # GTS-specific (paper default)
     batch_size: int = 64
     max_epochs: int = 100
     early_stop: int = 30
-    clip_grad: float = 5.0
+    clip_grad: float | None = 5.0            # gradient-norm clip; None disables
 
     # Architecture (paper defaults)
     rnn_units: int = 64
@@ -164,12 +179,15 @@ class GTSModel(BenchmarkModel):
     def __init__(self) -> None:
         self._model: _GTSNet | None = None
         self._scaler: _FeatureScaler | None = None
+        self._y_scaler: _FeatureScaler | None = None
         self._device: torch.device | None = None
         self._cfg: GTSConfig | None = None
         self._node_feas: torch.Tensor | None = None
         self._num_nodes: int | None = None
         self._out_steps: int | None = None
         self._output_dim: int | None = None
+        self._train_compute_sec: float = 0.0
+        self._infer_compute_sec: float = 0.0
 
     # ---- BenchmarkModel interface ----------------------------------------
 
@@ -205,15 +223,13 @@ class GTSModel(BenchmarkModel):
         self._out_steps = out_steps
         self._output_dim = output_dim
 
-        # -- Fit scaler on x_train (per-feature, ignoring NaN) -------------
-        flat = x_train.reshape(-1, input_dim)
-        mean = torch.nanmean(flat, dim=0)
-        diff_sq = (flat - mean) ** 2
-        count = (~torch.isnan(flat)).sum(dim=0).float()
-        std = torch.sqrt(torch.nansum(diff_sq, dim=0) / count)
-        std = torch.clamp(std, min=1e-8)
-        scaler = _FeatureScaler(mean, std).to(device)
+        # -- Fit scalers (per-feature z-score, NaN-aware) ------------------
+        # Separate y-scaler so inverse_transform uses target stats and
+        # never silently relies on "first D_out features are the targets".
+        scaler = _fit_feature_scaler(x_train, input_dim, device)
+        y_scaler = _fit_feature_scaler(y_train, output_dim, device)
         self._scaler = scaler
+        self._y_scaler = y_scaler
 
         # -- Build node-feature pool for latent graph ---------------------
         node_feas = _build_node_feas(x_train, cfg.feas_len).to(device)
@@ -276,7 +292,10 @@ class GTSModel(BenchmarkModel):
         # -- Training setup -----------------------------------------------
         criterion = masked_huber_loss
         optimizer = torch.optim.Adam(
-            model.parameters(), lr=cfg.lr, eps=cfg.eps,
+            model.parameters(),
+            lr=cfg.lr,
+            eps=cfg.eps,
+            weight_decay=cfg.weight_decay,
         )
         scheduler = None
         if cfg.use_lr_scheduler:
@@ -287,6 +306,7 @@ class GTSModel(BenchmarkModel):
             )
 
         # -- Training loop -------------------------------------------------
+        train_sw = Stopwatch()
         train_losses: list[float] = []
         val_losses: list[float] = []
         best_val_loss = float("inf")
@@ -303,57 +323,60 @@ class GTSModel(BenchmarkModel):
             model.train()
             batch_losses: list[float] = []
             for x_batch, y_batch in train_loader:
-                # (B, T, N, D) -> (T, B, N*D)
-                seq = x_batch.permute(1, 0, 2, 3).reshape(
-                    in_steps, -1, num_nodes * input_dim
-                )
-                # Teacher-forcing labels for curriculum learning. Decoder
-                # feedback cannot tolerate NaN, so the labels fed back into
-                # the model must be filled — but the loss below is still
-                # computed against the NaN-bearing ``y_batch`` so missing
-                # positions do not contribute to gradients.
-                # (B, T_out, N, D_out) -> (T_out, B, N*D_out)
-                lbl = torch.nan_to_num(
-                    y_batch[..., :output_dim]
-                ).permute(1, 0, 2, 3).reshape(
-                    out_steps, -1, num_nodes * output_dim
-                )
-
-                output, edge_probs = model(
-                    seq,
-                    node_feas,
-                    temp=cfg.temperature,
-                    gumbel_hard=True,
-                    labels=lbl,
-                    batches_seen=batches_seen,
-                )
-                # output: (T_out, B, N*D_out) -> (B, T_out, N, D_out)
-                output = output.reshape(
-                    out_steps, -1, num_nodes, output_dim
-                ).permute(1, 0, 2, 3)
-                output = scaler.inverse_transform(output)
-                loss_pred = criterion(output, y_batch)
-
-                if use_reg:
-                    probs = edge_probs.reshape(-1)
-                    true_edges = adj_ref.reshape(-1)
-                    loss_g = nn.functional.binary_cross_entropy(
-                        probs.clamp(1e-7, 1 - 1e-7), true_edges
+                with train_sw:
+                    # (B, T, N, D) -> (T, B, N*D)
+                    seq = x_batch.permute(1, 0, 2, 3).reshape(
+                        in_steps, -1, num_nodes * input_dim
                     )
-                    loss = loss_pred + cfg.bce_weight * loss_g
-                else:
-                    loss = loss_pred
+                    # Teacher-forcing labels for curriculum learning. Decoder
+                    # feedback cannot tolerate NaN, so the labels fed back
+                    # into the model must be filled — but the loss below is
+                    # still computed against the NaN-bearing ``y_batch`` so
+                    # missing positions do not contribute to gradients.
+                    # (B, T_out, N, D_out) -> (T_out, B, N*D_out)
+                    lbl = torch.nan_to_num(
+                        y_batch[..., :output_dim]
+                    ).permute(1, 0, 2, 3).reshape(
+                        out_steps, -1, num_nodes * output_dim
+                    )
 
-                optimizer.zero_grad()
-                loss.backward()
-                if cfg.clip_grad:
-                    nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad)
-                optimizer.step()
-                batch_losses.append(loss_pred.item())
+                    output, edge_probs = model(
+                        seq,
+                        node_feas,
+                        temp=cfg.temperature,
+                        gumbel_hard=True,
+                        labels=lbl,
+                        batches_seen=batches_seen,
+                    )
+                    # output: (T_out, B, N*D_out) -> (B, T_out, N, D_out)
+                    output = output.reshape(
+                        out_steps, -1, num_nodes, output_dim
+                    ).permute(1, 0, 2, 3)
+                    output = y_scaler.inverse_transform(output)
+                    loss_pred = criterion(output, y_batch)
+
+                    if use_reg:
+                        probs = edge_probs.reshape(-1)
+                        true_edges = adj_ref.reshape(-1)
+                        loss_g = nn.functional.binary_cross_entropy(
+                            probs.clamp(1e-7, 1 - 1e-7), true_edges
+                        )
+                        loss = loss_pred + cfg.bce_weight * loss_g
+                    else:
+                        loss = loss_pred
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    if cfg.clip_grad:
+                        nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad)
+                    optimizer.step()
+                    batch_loss = loss_pred.item()
+                batch_losses.append(batch_loss)
                 batches_seen += 1
 
-            if scheduler is not None:
-                scheduler.step()
+            with train_sw:
+                if scheduler is not None:
+                    scheduler.step()
             train_losses.append(float(np.mean(batch_losses)))
 
             # ---- validate ----
@@ -361,20 +384,22 @@ class GTSModel(BenchmarkModel):
             batch_losses_val: list[float] = []
             with torch.no_grad():
                 for x_batch, y_batch in val_loader:
-                    seq = x_batch.permute(1, 0, 2, 3).reshape(
-                        in_steps, -1, num_nodes * input_dim
-                    )
-                    output, _ = model(
-                        seq,
-                        node_feas,
-                        temp=cfg.temperature,
-                        gumbel_hard=True,
-                    )
-                    output = output.reshape(
-                        out_steps, -1, num_nodes, output_dim
-                    ).permute(1, 0, 2, 3)
-                    output = scaler.inverse_transform(output)
-                    batch_losses_val.append(criterion(output, y_batch).item())
+                    with train_sw:
+                        seq = x_batch.permute(1, 0, 2, 3).reshape(
+                            in_steps, -1, num_nodes * input_dim
+                        )
+                        output, _ = model(
+                            seq,
+                            node_feas,
+                            temp=cfg.temperature,
+                            gumbel_hard=True,
+                        )
+                        output = output.reshape(
+                            out_steps, -1, num_nodes, output_dim
+                        ).permute(1, 0, 2, 3)
+                        output = y_scaler.inverse_transform(output)
+                        batch_loss = criterion(output, y_batch).item()
+                    batch_losses_val.append(batch_loss)
             val_loss = float(np.mean(batch_losses_val))
             val_losses.append(val_loss)
 
@@ -391,6 +416,7 @@ class GTSModel(BenchmarkModel):
         if best_state is not None:
             model.load_state_dict(best_state)
         self._model = model
+        self._train_compute_sec = train_sw.elapsed
 
         if device.type == "cuda":
             torch.cuda.empty_cache()
@@ -406,6 +432,7 @@ class GTSModel(BenchmarkModel):
         if (
             self._model is None
             or self._scaler is None
+            or self._y_scaler is None
             or self._node_feas is None
         ):
             raise RuntimeError("Call fit() before predict().")
@@ -413,6 +440,7 @@ class GTSModel(BenchmarkModel):
         cfg = _resolve_config(config)
         device = self._device
         scaler = self._scaler
+        y_scaler = self._y_scaler
         model = self._model
         num_nodes = self._num_nodes
         out_steps = self._out_steps
@@ -427,25 +455,29 @@ class GTSModel(BenchmarkModel):
             shuffle=False,
         )
 
+        infer_sw = Stopwatch()
         model.eval()
         preds: list[np.ndarray] = []
         with torch.no_grad():
             for (x_batch,) in loader:
-                seq = x_batch.permute(1, 0, 2, 3).reshape(
-                    in_steps, -1, num_nodes * input_dim
-                )
-                output, _ = model(
-                    seq,
-                    self._node_feas,
-                    temp=cfg.temperature,
-                    gumbel_hard=True,
-                )
-                output = output.reshape(
-                    out_steps, -1, num_nodes, output_dim
-                ).permute(1, 0, 2, 3)
-                output = scaler.inverse_transform(output)
-                preds.append(output.cpu().numpy())
+                with infer_sw:
+                    seq = x_batch.permute(1, 0, 2, 3).reshape(
+                        in_steps, -1, num_nodes * input_dim
+                    )
+                    output, _ = model(
+                        seq,
+                        self._node_feas,
+                        temp=cfg.temperature,
+                        gumbel_hard=True,
+                    )
+                    output = output.reshape(
+                        out_steps, -1, num_nodes, output_dim
+                    ).permute(1, 0, 2, 3)
+                    output = y_scaler.inverse_transform(output)
+                    out_cpu = output.cpu().numpy()
+                preds.append(out_cpu)
 
+        self._infer_compute_sec = infer_sw.elapsed
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
@@ -455,3 +487,9 @@ class GTSModel(BenchmarkModel):
         if self._cfg is None:
             return {}
         return asdict(self._cfg)
+
+    def get_train_compute_sec(self) -> float | None:
+        return self._train_compute_sec or None
+
+    def get_inference_compute_sec(self) -> float | None:
+        return self._infer_compute_sec or None

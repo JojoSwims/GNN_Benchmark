@@ -64,7 +64,7 @@ from gnn_benchmark.benchmark import BenchmarkRunner, PreparedDataset
 from gnn_benchmark.core.workspace import DataWorkspace
 from gnn_benchmark.models import BenchmarkModel, TrainingHistory
 from gnn_benchmark.tuning.search_space import Sampler
-from gnn_benchmark.utils.timing import ComputeTimer
+from gnn_benchmark.utils.timing import WallTimer
 
 try:
     import torch
@@ -352,13 +352,21 @@ class HyperparameterTuner:
             compute_elapsed = 0.0
             try:
                 model = self.model_factory()
-                with ComputeTimer() as timer:
+                with WallTimer() as timer:
                     history = model.fit(
                         prepared.x_train, prepared.y_train,
                         prepared.x_val, prepared.y_val,
                         prepared.adj, trial_cfg,
                     )
-                compute_elapsed = timer.elapsed
+                # Prefer the wrapper's per-batch compute total when it
+                # exposes one (the per-batch Stopwatch excludes
+                # DataLoader iteration and host↔device transfer).  Fall
+                # back to the outer wall-clock so legacy wrappers still
+                # contribute a number.
+                wrapper_compute = model.get_train_compute_sec()
+                compute_elapsed = (
+                    wrapper_compute if wrapper_compute is not None else timer.elapsed
+                )
                 if history is None:
                     raise RuntimeError(
                         "model.fit() returned None — the tuner needs a "
