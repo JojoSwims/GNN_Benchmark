@@ -26,6 +26,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
 from gnn_benchmark.models.MTGNN.net import gtnet
+from gnn_benchmark.utils.losses import masked_huber_loss
 
 
 # ---------------------------------------------------------------------------
@@ -66,10 +67,10 @@ class MTGNNConfig:
     tanhalpha: float = 3.0
     layer_norm_affline: bool = True
 
-    # LR scheduler (cosine annealing)
-    use_lr_scheduler: bool = False
-    lr_t_max: int = 100
-    lr_eta_min: float = 1e-5
+    # LR scheduler (multi-step decay — unified across all benchmark models)
+    use_lr_scheduler: bool = True
+    lr_milestones: list[int] = field(default_factory=lambda: [20, 40, 60, 80])
+    lr_decay_ratio: float = 0.5
 
     # Runtime
     seed: int | None = None
@@ -198,9 +199,9 @@ class MTGNNModel(BenchmarkModel):
         x_train_n = torch.nan_to_num(scaler.transform(x_train.to(device)))
         x_val_n = torch.nan_to_num(scaler.transform(x_val.to(device)))
 
-        # -- Prepare y (replace NaN with 0 for loss) -----------------------
-        y_train_d = torch.nan_to_num(y_train.to(device))
-        y_val_d = torch.nan_to_num(y_val.to(device))
+        # -- Targets keep NaN so masked_huber_loss can ignore them ---------
+        y_train_d = y_train.to(device)
+        y_val_d = y_val.to(device)
 
         # -- DataLoaders ---------------------------------------------------
         train_loader = DataLoader(
@@ -241,14 +242,16 @@ class MTGNNModel(BenchmarkModel):
         ).to(device)
 
         # -- Training setup ------------------------------------------------
-        criterion = nn.HuberLoss()
+        criterion = masked_huber_loss
         optimizer = torch.optim.Adam(
             model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
         )
         scheduler = None
         if cfg.use_lr_scheduler:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, T_max=cfg.lr_t_max, eta_min=cfg.lr_eta_min,
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(
+                optimizer,
+                milestones=cfg.lr_milestones,
+                gamma=cfg.lr_decay_ratio,
             )
 
         # -- Training loop -------------------------------------------------

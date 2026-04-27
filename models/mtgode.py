@@ -19,7 +19,7 @@ with ``pip install torchdiffeq``.
 from __future__ import annotations
 
 import copy
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import numpy as np
@@ -29,6 +29,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
 from gnn_benchmark.models.MTGODE.model import MTGODE
+from gnn_benchmark.utils.losses import masked_huber_loss
 
 
 # ---------------------------------------------------------------------------
@@ -80,10 +81,10 @@ class MTGODEConfig:
     adjoint: bool = False
     perturb: bool = False
 
-    # LR scheduler (multi-step decay)
+    # LR scheduler (multi-step decay — unified across all benchmark models)
     use_lr_scheduler: bool = True
-    lr_decay_steps: int = 100
-    lr_decay_rate: float = 0.1
+    lr_milestones: list[int] = field(default_factory=lambda: [20, 40, 60, 80])
+    lr_decay_ratio: float = 0.5
 
     # Runtime
     seed: int | None = None
@@ -211,9 +212,9 @@ class MTGODEModel(BenchmarkModel):
         x_train_n = torch.nan_to_num(scaler.transform(x_train.to(device)))
         x_val_n = torch.nan_to_num(scaler.transform(x_val.to(device)))
 
-        # -- Prepare y (replace NaN with 0 for loss) -----------------------
-        y_train_d = torch.nan_to_num(y_train.to(device))
-        y_val_d = torch.nan_to_num(y_val.to(device))
+        # -- Targets keep NaN so masked_huber_loss can ignore them ---------
+        y_train_d = y_train.to(device)
+        y_val_d = y_val.to(device)
 
         # -- DataLoaders ---------------------------------------------------
         train_loader = DataLoader(
@@ -259,7 +260,7 @@ class MTGODEModel(BenchmarkModel):
         ).to(device)
 
         # -- Training setup ------------------------------------------------
-        criterion = nn.HuberLoss()
+        criterion = masked_huber_loss
         optimizer = torch.optim.Adam(
             model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
         )
@@ -267,8 +268,8 @@ class MTGODEModel(BenchmarkModel):
         if cfg.use_lr_scheduler:
             scheduler = torch.optim.lr_scheduler.MultiStepLR(
                 optimizer,
-                milestones=[cfg.lr_decay_steps],
-                gamma=cfg.lr_decay_rate,
+                milestones=cfg.lr_milestones,
+                gamma=cfg.lr_decay_ratio,
             )
 
         # -- Training loop -------------------------------------------------

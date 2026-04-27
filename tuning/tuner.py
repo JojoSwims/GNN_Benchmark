@@ -64,6 +64,7 @@ from gnn_benchmark.benchmark import BenchmarkRunner, PreparedDataset
 from gnn_benchmark.core.workspace import DataWorkspace
 from gnn_benchmark.models import BenchmarkModel, TrainingHistory
 from gnn_benchmark.tuning.search_space import Sampler
+from gnn_benchmark.utils.timing import ComputeTimer
 
 try:
     import torch
@@ -101,6 +102,11 @@ class TrialResult:
     ``config`` is the full config passed to ``fit`` (base + overrides).
     ``overrides`` records only the fields the tuner varied, so results are
     easy to read in the summary table.
+
+    ``duration_sec`` is total wall-clock; ``compute_time_sec`` is the
+    pure-compute portion spent inside ``model.fit``, isolated so models
+    with heavy graph construction or long DataLoader stalls can be
+    compared on the actual training-step budget.
     """
 
     trial_index: int
@@ -109,6 +115,7 @@ class TrialResult:
     best_val_loss: float | None
     train_history: TrainingHistory | None
     duration_sec: float
+    compute_time_sec: float = 0.0
     error: str | None = None
 
 
@@ -120,6 +127,16 @@ class TuningResult:
     dataset_name: str
     trials: list[TrialResult] = field(default_factory=list)
     best: TrialResult | None = None
+
+    @property
+    def total_compute_time_sec(self) -> float:
+        """Sum of pure-compute fit time across all trials.
+
+        Useful for forwarding to a downstream :class:`BenchmarkResult` so a
+        results report can attribute the hyperparameter-search budget
+        alongside the final training and inference budgets.
+        """
+        return sum(t.compute_time_sec for t in self.trials)
 
     def summary(self) -> str:
         """Return a formatted table of trials and the winning config."""
@@ -160,6 +177,17 @@ class TuningResult:
             lines.append(f"Best: trial {self.best.trial_index}  "
                          f"val_loss={self.best.best_val_loss:.4f}  "
                          f"overrides={self.best.overrides}")
+        # Compute-budget block: separates the "hyperparameter training
+        # step" cost from the final training cost so reports can show
+        # both numbers side by side.
+        compute_total = self.total_compute_time_sec
+        wall_total = sum(t.duration_sec for t in self.trials)
+        if compute_total > 0 or wall_total > 0:
+            lines.append(
+                f"Hyperparameter search compute: "
+                f"{compute_total:.2f}s of compute over "
+                f"{wall_total:.2f}s wall ({len(self.trials)} trial(s))"
+            )
         lines.append(thick)
         return "\n".join(lines)
 
@@ -168,6 +196,7 @@ class TuningResult:
         return {
             "model_name": self.model_name,
             "dataset_name": self.dataset_name,
+            "total_compute_time_sec": self.total_compute_time_sec,
             "trials": [
                 {
                     "trial_index": t.trial_index,
@@ -177,6 +206,7 @@ class TuningResult:
                     "train_loss": t.train_history.train_loss if t.train_history else None,
                     "val_loss": t.train_history.val_loss if t.train_history else None,
                     "duration_sec": t.duration_sec,
+                    "compute_time_sec": t.compute_time_sec,
                     "error": t.error,
                 }
                 for t in self.trials
@@ -319,13 +349,16 @@ class HyperparameterTuner:
             error: str | None = None
 
             model: BenchmarkModel | None = None
+            compute_elapsed = 0.0
             try:
                 model = self.model_factory()
-                history = model.fit(
-                    prepared.x_train, prepared.y_train,
-                    prepared.x_val, prepared.y_val,
-                    prepared.adj, trial_cfg,
-                )
+                with ComputeTimer() as timer:
+                    history = model.fit(
+                        prepared.x_train, prepared.y_train,
+                        prepared.x_val, prepared.y_val,
+                        prepared.adj, trial_cfg,
+                    )
+                compute_elapsed = timer.elapsed
                 if history is None:
                     raise RuntimeError(
                         "model.fit() returned None — the tuner needs a "
@@ -351,6 +384,7 @@ class HyperparameterTuner:
                 best_val_loss=best_val,
                 train_history=history,
                 duration_sec=duration,
+                compute_time_sec=compute_elapsed,
                 error=error,
             )
             result.trials.append(trial)

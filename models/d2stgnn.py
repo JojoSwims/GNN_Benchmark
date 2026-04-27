@@ -25,6 +25,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
 from gnn_benchmark.models.D2STGNN.models.model import D2STGNN
+from gnn_benchmark.utils.losses import masked_huber_loss
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +290,7 @@ class D2STGNNModel(BenchmarkModel):
         model = D2STGNN(**model_args).to(device)
 
         # -- Training setup ------------------------------------------------
-        criterion = nn.HuberLoss()
+        criterion = masked_huber_loss
         optimizer = torch.optim.Adam(
             model.parameters(),
             lr=cfg.lr,
@@ -435,7 +436,7 @@ class D2STGNNModel(BenchmarkModel):
         x_batch = x_batch.to(device, non_blocking=non_blocking)
         y_batch = y_batch.to(device, non_blocking=non_blocking)
         x_batch = torch.nan_to_num(scaler.transform(x_batch))
-        y_batch = torch.nan_to_num(y_batch)
+        # Targets keep NaN so masked_huber_loss can ignore missing positions.
         x_batch = cls._pad_time_features(x_batch)
         return x_batch, y_batch
 

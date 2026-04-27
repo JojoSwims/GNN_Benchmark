@@ -91,6 +91,7 @@ from gnn_benchmark.utils.data import (
 )
 from gnn_benchmark.models import BenchmarkModel
 from gnn_benchmark.utils.metrics import mae, mape, rmse
+from gnn_benchmark.utils.timing import ComputeTimer
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +180,9 @@ class DatasetResult:
         mape:         Mean Absolute Percentage Error (0–100 scale).
         per_horizon:  Per-step metrics ``{step: {"mae": ..., "rmse": ..., "mape": ...}}``
                       for every horizon step h=1..H.
+        train_time_sec:     Wall-clock seconds spent inside ``model.fit``
+                            (data loading already done; pure compute budget).
+        inference_time_sec: Wall-clock seconds spent inside ``model.predict``.
         error:        Exception message if this dataset failed; other fields are ``None``.
     """
 
@@ -187,6 +191,8 @@ class DatasetResult:
     rmse: float | None = None
     mape: float | None = None
     per_horizon: dict[int, dict[str, float]] = field(default_factory=dict)
+    train_time_sec: float | None = None
+    inference_time_sec: float | None = None
     error: str | None = None
 
 
@@ -199,11 +205,15 @@ class BenchmarkResult:
         model_name:      Value of ``BenchmarkModel.name``.
         model_config:    Dict returned by ``BenchmarkModel.get_config()``.
         dataset_results: Mapping from dataset key to ``DatasetResult``.
+        tuning_compute_time_sec: Total seconds spent inside ``model.fit``
+            during hyperparameter tuning, when this benchmark run was
+            preceded by a tuning sweep. ``None`` for a vanilla evaluation.
     """
 
     model_name: str
     model_config: dict = field(default_factory=dict)
     dataset_results: dict[str, DatasetResult] = field(default_factory=dict)
+    tuning_compute_time_sec: float | None = None
 
     # Horizons highlighted in the per-dataset table
     _DISPLAY_HORIZONS = (1, 3, 6, 12)
@@ -252,6 +262,20 @@ class BenchmarkResult:
                 f"{'Avg':<10} {r.mae:>9.4f} {r.rmse:>9.4f} {r.mape:>8.2f}%"
             )
 
+            # Compute-budget block — pure model.fit / model.predict time
+            # so different models are comparable on the same hardware.
+            if r.train_time_sec is not None or r.inference_time_sec is not None:
+                lines.append(thin)
+                tt = (
+                    f"{r.train_time_sec:.2f}s" if r.train_time_sec is not None else "—"
+                )
+                it = (
+                    f"{r.inference_time_sec:.2f}s"
+                    if r.inference_time_sec is not None
+                    else "—"
+                )
+                lines.append(f"compute   train={tt}  inference={it}")
+
             mae_vals.append(r.mae)
             rmse_vals.append(r.rmse)
             mape_vals.append(r.mape)
@@ -269,6 +293,48 @@ class BenchmarkResult:
                 f" {np.mean(mape_vals):>8.2f}%"
             )
 
+        # Compute-budget aggregate so the report can answer "how much
+        # GPU time did this model cost end-to-end".
+        train_times = [
+            r.train_time_sec
+            for r in self.dataset_results.values()
+            if r.train_time_sec is not None
+        ]
+        infer_times = [
+            r.inference_time_sec
+            for r in self.dataset_results.values()
+            if r.inference_time_sec is not None
+        ]
+        if train_times or infer_times or self.tuning_compute_time_sec is not None:
+            lines.append(thick)
+            lines.append("Compute budget (seconds)")
+            lines.append(thin)
+            if self.tuning_compute_time_sec is not None:
+                lines.append(
+                    f"  hyperparameter search (sum of trial fit times): "
+                    f"{self.tuning_compute_time_sec:.2f}s"
+                )
+            if train_times:
+                lines.append(
+                    f"  training   (sum across datasets): "
+                    f"{sum(train_times):.2f}s"
+                )
+            if infer_times:
+                lines.append(
+                    f"  inference  (sum across datasets): "
+                    f"{sum(infer_times):.2f}s"
+                )
+
+        # Full configuration so the table is self-contained for results
+        # reporting — every hyperparameter that produced these numbers
+        # is on the page.
+        if self.model_config:
+            lines.append(thick)
+            lines.append("Model configuration")
+            lines.append(thin)
+            for key in sorted(self.model_config):
+                lines.append(f"  {key} = {self.model_config[key]!r}")
+
         lines.append(thick)
         lines.append("(metrics in original units)")
         return "\n".join(lines)
@@ -278,12 +344,15 @@ class BenchmarkResult:
         return {
             "model_name": self.model_name,
             "model_config": self.model_config,
+            "tuning_compute_time_sec": self.tuning_compute_time_sec,
             "datasets": {
                 name: {
                     "mae": r.mae,
                     "rmse": r.rmse,
                     "mape": r.mape,
                     "per_horizon": r.per_horizon,
+                    "train_time_sec": r.train_time_sec,
+                    "inference_time_sec": r.inference_time_sec,
                     "error": r.error,
                 }
                 for name, r in self.dataset_results.items()
@@ -336,6 +405,7 @@ class BenchmarkRunner:
         self,
         model: BenchmarkModel,
         config: Any = None,
+        tuning_compute_time_sec: float | None = None,
     ) -> BenchmarkResult:
         """
         Run the full benchmark for all configured datasets.
@@ -354,6 +424,11 @@ class BenchmarkRunner:
         Args:
             model:  A fitted or unfitted ``BenchmarkModel`` instance.
             config: Opaque config object forwarded to ``fit`` and ``predict``.
+            tuning_compute_time_sec:
+                Optional. When this run follows a hyperparameter sweep,
+                pass ``tuning_result.total_compute_time_sec`` so the
+                printed report attributes the search cost alongside the
+                final training and inference costs.
 
         Returns:
             ``BenchmarkResult`` with per-dataset and aggregate metrics.
@@ -367,6 +442,7 @@ class BenchmarkRunner:
         result = BenchmarkResult(
             model_name=model.name,
             model_config=model.get_config(),
+            tuning_compute_time_sec=tuning_compute_time_sec,
         )
 
         workspace = DataWorkspace(self.workspace_dir)
@@ -387,10 +463,26 @@ class BenchmarkRunner:
             if dr.error:
                 self._log(f"[{dataset_key}] FAILED — {dr.error}")
             else:
+                tt = (
+                    f"  train={dr.train_time_sec:.1f}s"
+                    if dr.train_time_sec is not None
+                    else ""
+                )
+                it = (
+                    f"  infer={dr.inference_time_sec:.2f}s"
+                    if dr.inference_time_sec is not None
+                    else ""
+                )
                 self._log(
                     f"[{dataset_key}] Done  "
-                    f"MAE={dr.mae:.4f}  RMSE={dr.rmse:.4f}  MAPE={dr.mape:.2f}%"
+                    f"MAE={dr.mae:.4f}  RMSE={dr.rmse:.4f}  "
+                    f"MAPE={dr.mape:.2f}%{tt}{it}"
                 )
+
+        # Refresh model_config after the final fit so the report's
+        # configuration block reflects the hyperparameters that produced
+        # the printed metrics.
+        result.model_config = model.get_config() or result.model_config
 
         return result
 
@@ -479,17 +571,19 @@ class BenchmarkRunner:
     ) -> DatasetResult:
         prepared = self.prepare_dataset(workspace, dataset_key)
 
-        # 7. Fit
+        # 7. Fit (timed: pure compute, data prep above is excluded)
         self._log(f"[{dataset_key}] Fitting model …")
-        model.fit(
-            prepared.x_train, prepared.y_train,
-            prepared.x_val, prepared.y_val,
-            prepared.adj, config,
-        )
+        with ComputeTimer() as train_timer:
+            model.fit(
+                prepared.x_train, prepared.y_train,
+                prepared.x_val, prepared.y_val,
+                prepared.adj, config,
+            )
 
-        # 8. Predict
+        # 8. Predict (timed)
         self._log(f"[{dataset_key}] Predicting …")
-        y_pred = model.predict(prepared.x_test, prepared.adj, config)
+        with ComputeTimer() as infer_timer:
+            y_pred = model.predict(prepared.x_test, prepared.adj, config)
         y_pred = np.asarray(y_pred)
 
         y_test = prepared.y_test
@@ -526,6 +620,8 @@ class BenchmarkRunner:
             rmse=dataset_rmse,
             mape=dataset_mape,
             per_horizon=per_horizon,  # always populated (h=1..horizon)
+            train_time_sec=train_timer.elapsed,
+            inference_time_sec=infer_timer.elapsed,
         )
 
     def _log(self, msg: str) -> None:

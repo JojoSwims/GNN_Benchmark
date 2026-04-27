@@ -26,6 +26,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
 from gnn_benchmark.models.GTS.model import GTSModel as _GTSNet
+from gnn_benchmark.utils.losses import masked_huber_loss
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +234,9 @@ class GTSModel(BenchmarkModel):
         # -- Normalize inputs and move to device --------------------------
         x_train_n = torch.nan_to_num(scaler.transform(x_train.to(device)))
         x_val_n = torch.nan_to_num(scaler.transform(x_val.to(device)))
-        y_train_d = torch.nan_to_num(y_train.to(device))
-        y_val_d = torch.nan_to_num(y_val.to(device))
+        # Targets keep NaN so masked_huber_loss can ignore missing positions.
+        y_train_d = y_train.to(device)
+        y_val_d = y_val.to(device)
 
         train_loader = DataLoader(
             TensorDataset(x_train_n, y_train_d),
@@ -272,7 +274,7 @@ class GTSModel(BenchmarkModel):
         ).to(device)
 
         # -- Training setup -----------------------------------------------
-        criterion = nn.HuberLoss()
+        criterion = masked_huber_loss
         optimizer = torch.optim.Adam(
             model.parameters(), lr=cfg.lr, eps=cfg.eps,
         )
@@ -305,9 +307,15 @@ class GTSModel(BenchmarkModel):
                 seq = x_batch.permute(1, 0, 2, 3).reshape(
                     in_steps, -1, num_nodes * input_dim
                 )
-                # Teacher-forcing labels for curriculum learning:
+                # Teacher-forcing labels for curriculum learning. Decoder
+                # feedback cannot tolerate NaN, so the labels fed back into
+                # the model must be filled — but the loss below is still
+                # computed against the NaN-bearing ``y_batch`` so missing
+                # positions do not contribute to gradients.
                 # (B, T_out, N, D_out) -> (T_out, B, N*D_out)
-                lbl = y_batch[..., :output_dim].permute(1, 0, 2, 3).reshape(
+                lbl = torch.nan_to_num(
+                    y_batch[..., :output_dim]
+                ).permute(1, 0, 2, 3).reshape(
                     out_steps, -1, num_nodes * output_dim
                 )
 

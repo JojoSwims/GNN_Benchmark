@@ -24,6 +24,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
 from gnn_benchmark.models.STAEFormer.model.STAEformer import STAEformer
+from gnn_benchmark.utils.losses import masked_huber_loss
 
 
 # ---------------------------------------------------------------------------
@@ -42,12 +43,15 @@ class STAEFormerConfig:
     # Training hyper-parameters
     lr: float = 0.001
     weight_decay: float = 0.0003
-    milestones: list[int] = field(default_factory=lambda: [20, 30])
-    lr_decay_rate: float = 0.1
     batch_size: int = 16
     max_epochs: int = 200
     early_stop: int = 30
     clip_grad: float | None = None
+
+    # LR scheduler (multi-step decay — unified across all benchmark models)
+    use_lr_scheduler: bool = True
+    lr_milestones: list[int] = field(default_factory=lambda: [20, 30])
+    lr_decay_ratio: float = 0.1
 
     # Architecture (paper defaults — override only if experimenting)
     input_embedding_dim: int = 24
@@ -221,13 +225,17 @@ class STAEFormerModel(BenchmarkModel):
         ).to(device)
 
         # -- Training setup ------------------------------------------------
-        criterion = nn.HuberLoss()
+        criterion = masked_huber_loss
         optimizer = torch.optim.Adam(
             model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
         )
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=cfg.milestones, gamma=cfg.lr_decay_rate,
-        )
+        scheduler = None
+        if cfg.use_lr_scheduler:
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(
+                optimizer,
+                milestones=cfg.lr_milestones,
+                gamma=cfg.lr_decay_ratio,
+            )
 
         # -- Training loop -------------------------------------------------
         train_losses: list[float] = []
@@ -255,7 +263,8 @@ class STAEFormerModel(BenchmarkModel):
                 optimizer.step()
                 batch_losses.append(loss.item())
 
-            scheduler.step()
+            if scheduler is not None:
+                scheduler.step()
             train_losses.append(float(np.mean(batch_losses)))
 
             # ---- validate ----
@@ -357,5 +366,5 @@ class STAEFormerModel(BenchmarkModel):
         x_batch = x_batch.to(device, non_blocking=non_blocking)
         y_batch = y_batch.to(device, non_blocking=non_blocking)
         x_batch = torch.nan_to_num(scaler.transform(x_batch))
-        y_batch = torch.nan_to_num(y_batch)
+        # Targets keep NaN so masked_huber_loss can ignore missing positions.
         return x_batch, y_batch
