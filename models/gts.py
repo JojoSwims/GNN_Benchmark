@@ -84,7 +84,11 @@ class GTSConfig:
     #   loss_total = loss_pred + bce_weight * BCE(learned_adj, adj)
     # for the first ``epoch_use_regularization`` epochs.
     bce_weight: float = 1.0
-    epoch_use_regularization: int = 0
+    # Default to 5 epochs of BCE regularization so GTS uses *both* the
+    # learned latent graph and the provided adjacency when one is
+    # available.  The gating in ``fit`` is no-op when adj is None or
+    # ``bce_weight`` is 0, so this default is safe in either case.
+    epoch_use_regularization: int = 5
 
     # LR scheduler (multi-step)
     use_lr_scheduler: bool = True

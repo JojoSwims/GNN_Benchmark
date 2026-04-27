@@ -231,6 +231,19 @@ class MTGNNModel(BenchmarkModel):
             shuffle=False,
         )
 
+        # -- Predefined adjacency ------------------------------------------
+        # MTGNN's graph mode is exclusive: when ``buildA_true=True`` it
+        # learns a graph from scratch and the predefined adjacency is
+        # ignored; when ``buildA_true=False`` it reads from
+        # ``predefined_A`` instead.  We forward the provided ``adj`` so
+        # the second mode is actually usable end-to-end (callers can
+        # tune ``buildA_true`` to compare the two).
+        predefined_A: torch.Tensor | None = None
+        if not cfg.buildA_true and adj is not None:
+            predefined_A = torch.tensor(
+                np.asarray(adj, dtype=np.float32), device=device,
+            )
+
         # -- Build model ---------------------------------------------------
         model = gtnet(
             gcn_true=cfg.gcn_true,
@@ -238,7 +251,7 @@ class MTGNNModel(BenchmarkModel):
             gcn_depth=cfg.gcn_depth,
             num_nodes=num_nodes,
             device=device,
-            predefined_A=None,
+            predefined_A=predefined_A,
             static_feat=None,
             dropout=cfg.dropout,
             # `subgraph_size` is the top-k neighbours per node inside MTGNN's
