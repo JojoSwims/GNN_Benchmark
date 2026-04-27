@@ -25,6 +25,21 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
 from gnn_benchmark.models.D2STGNN.models.model import D2STGNN
+from gnn_benchmark.utils.losses import masked_huber_loss
+from gnn_benchmark.utils.timing import Stopwatch
+
+
+def _fit_feature_scaler(
+    tensor: torch.Tensor, feature_dim: int, device: torch.device
+) -> "_FeatureScaler":
+    """NaN-aware per-feature z-score scaler fit (used for both x and y)."""
+    flat = tensor.reshape(-1, feature_dim)
+    mean = torch.nanmean(flat, dim=0)
+    diff_sq = (flat - mean) ** 2
+    count = (~torch.isnan(flat)).sum(dim=0).float()
+    std = torch.sqrt(torch.nansum(diff_sq, dim=0) / count)
+    std = torch.clamp(std, min=1e-8)
+    return _FeatureScaler(mean, std).to(device)
 
 
 # ---------------------------------------------------------------------------
@@ -43,11 +58,11 @@ class D2STGNNConfig:
     # Training hyper-parameters
     lr: float = 0.002
     weight_decay: float = 1e-5
-    eps: float = 1e-8
+    eps: float = 1e-8                        # Adam epsilon
     batch_size: int = 32
     max_epochs: int = 80
     early_stop: int = 30
-    clip_grad: float = 5.0
+    clip_grad: float | None = 5.0            # gradient-norm clip; None disables
 
     # Architecture (paper defaults)
     num_hidden: int = 32
@@ -197,10 +212,13 @@ class D2STGNNModel(BenchmarkModel):
     def __init__(self) -> None:
         self._model: D2STGNN | None = None
         self._scaler: _FeatureScaler | None = None
+        self._y_scaler: _FeatureScaler | None = None
         self._device: torch.device | None = None
         self._cfg: D2STGNNConfig | None = None
         self._out_steps: int | None = None
         self._output_dim: int | None = None
+        self._train_compute_sec: float = 0.0
+        self._infer_compute_sec: float = 0.0
 
     # ---- BenchmarkModel interface ----------------------------------------
 
@@ -235,16 +253,13 @@ class D2STGNNModel(BenchmarkModel):
         self._out_steps = out_steps
         self._output_dim = output_dim
 
-        # -- Fit scaler on x_train (per-feature, ignoring NaN) -------------
-        # Computed on CPU so we do not have to stage the full split on GPU.
-        flat = x_train.reshape(-1, input_dim)  # (S*T*N, D)
-        mean = torch.nanmean(flat, dim=0)      # (D,)
-        diff_sq = (flat - mean) ** 2
-        count = (~torch.isnan(flat)).sum(dim=0).float()
-        std = torch.sqrt(torch.nansum(diff_sq, dim=0) / count)
-        std = torch.clamp(std, min=1e-8)
-        scaler = _FeatureScaler(mean, std).to(device)
+        # -- Fit scalers (per-feature z-score, NaN-aware) ------------------
+        # Separate y-scaler so inverse_transform uses target stats and
+        # never silently relies on "first D_out features are the targets".
+        scaler = _fit_feature_scaler(x_train, input_dim, device)
+        y_scaler = _fit_feature_scaler(y_train, output_dim, device)
         self._scaler = scaler
+        self._y_scaler = y_scaler
 
         # -- Build adjacency supports -------------------------------------
         adjs = _build_d2stgnn_adjs(adj, num_nodes, device)
@@ -289,7 +304,7 @@ class D2STGNNModel(BenchmarkModel):
         model = D2STGNN(**model_args).to(device)
 
         # -- Training setup ------------------------------------------------
-        criterion = nn.HuberLoss()
+        criterion = masked_huber_loss
         optimizer = torch.optim.Adam(
             model.parameters(),
             lr=cfg.lr,
@@ -305,6 +320,7 @@ class D2STGNNModel(BenchmarkModel):
             )
 
         # -- Training loop -------------------------------------------------
+        train_sw = Stopwatch()
         train_losses: list[float] = []
         val_losses: list[float] = []
         best_val_loss = float("inf")
@@ -316,22 +332,28 @@ class D2STGNNModel(BenchmarkModel):
             model.train()
             batch_losses: list[float] = []
             for x_batch, y_batch in train_loader:
+                # Host→device copy + scaling are NOT timed — they are data
+                # movement, not compute. Only the model evaluation, loss,
+                # backward and optimizer step contribute to the budget.
                 x_batch, y_batch = self._prepare_batch(
                     x_batch, y_batch, scaler, device,
                 )
-                out = model(x_batch)  # (B, out_steps, N, output_dim)
-                out = scaler.inverse_transform(out)
-                loss = criterion(out, y_batch)
+                with train_sw:
+                    out = model(x_batch)  # (B, out_steps, N, output_dim)
+                    out = y_scaler.inverse_transform(out)
+                    loss = criterion(out, y_batch)
 
-                optimizer.zero_grad()
-                loss.backward()
-                if cfg.clip_grad:
-                    nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad)
-                optimizer.step()
-                batch_losses.append(loss.item())
+                    optimizer.zero_grad()
+                    loss.backward()
+                    if cfg.clip_grad:
+                        nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad)
+                    optimizer.step()
+                    batch_loss = loss.item()
+                batch_losses.append(batch_loss)
 
-            if scheduler is not None:
-                scheduler.step()
+            with train_sw:
+                if scheduler is not None:
+                    scheduler.step()
             train_losses.append(float(np.mean(batch_losses)))
 
             # ---- validate ----
@@ -342,10 +364,12 @@ class D2STGNNModel(BenchmarkModel):
                     x_batch, y_batch = self._prepare_batch(
                         x_batch, y_batch, scaler, device,
                     )
-                    out = model(x_batch)
-                    out = scaler.inverse_transform(out)
-                    loss = criterion(out, y_batch)
-                    batch_losses_val.append(loss.item())
+                    with train_sw:
+                        out = model(x_batch)
+                        out = y_scaler.inverse_transform(out)
+                        loss = criterion(out, y_batch)
+                        batch_loss = loss.item()
+                    batch_losses_val.append(batch_loss)
             val_loss = float(np.mean(batch_losses_val))
             val_losses.append(val_loss)
 
@@ -367,6 +391,7 @@ class D2STGNNModel(BenchmarkModel):
         if best_state is not None:
             model.load_state_dict(best_state)
         self._model = model
+        self._train_compute_sec = train_sw.elapsed
 
         if device.type == "cuda":
             torch.cuda.empty_cache()
@@ -379,12 +404,13 @@ class D2STGNNModel(BenchmarkModel):
         adj: np.ndarray | None,
         config: Any,
     ) -> np.ndarray:
-        if self._model is None or self._scaler is None:
+        if self._model is None or self._scaler is None or self._y_scaler is None:
             raise RuntimeError("Call fit() before predict().")
 
         cfg = _resolve_config(config)
         device = self._device
         scaler = self._scaler
+        y_scaler = self._y_scaler
         model = self._model
 
         pin = device.type == "cuda"
@@ -395,17 +421,23 @@ class D2STGNNModel(BenchmarkModel):
             pin_memory=pin,
         )
 
+        infer_sw = Stopwatch()
         model.eval()
         preds: list[np.ndarray] = []
         with torch.no_grad():
             for (x_batch,) in loader:
+                # Host→device transfer + scaling are excluded from the
+                # compute budget — only the model.forward call is timed.
                 x_batch = x_batch.to(device, non_blocking=pin)
                 x_batch = torch.nan_to_num(scaler.transform(x_batch))
                 x_batch = self._pad_time_features(x_batch)
-                out = model(x_batch)  # (B, out_steps, N, output_dim)
-                out = scaler.inverse_transform(out)
-                preds.append(out.cpu().numpy())
+                with infer_sw:
+                    out = model(x_batch)  # (B, out_steps, N, output_dim)
+                    out = y_scaler.inverse_transform(out)
+                    out_cpu = out.cpu().numpy()
+                preds.append(out_cpu)
 
+        self._infer_compute_sec = infer_sw.elapsed
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
@@ -415,6 +447,12 @@ class D2STGNNModel(BenchmarkModel):
         if self._cfg is None:
             return {}
         return asdict(self._cfg)
+
+    def get_train_compute_sec(self) -> float | None:
+        return self._train_compute_sec or None
+
+    def get_inference_compute_sec(self) -> float | None:
+        return self._infer_compute_sec or None
 
     # ---- Private helpers -------------------------------------------------
 
@@ -435,7 +473,7 @@ class D2STGNNModel(BenchmarkModel):
         x_batch = x_batch.to(device, non_blocking=non_blocking)
         y_batch = y_batch.to(device, non_blocking=non_blocking)
         x_batch = torch.nan_to_num(scaler.transform(x_batch))
-        y_batch = torch.nan_to_num(y_batch)
+        # Targets keep NaN so masked_huber_loss can ignore missing positions.
         x_batch = cls._pad_time_features(x_batch)
         return x_batch, y_batch
 

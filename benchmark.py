@@ -91,6 +91,7 @@ from gnn_benchmark.utils.data import (
 )
 from gnn_benchmark.models import BenchmarkModel
 from gnn_benchmark.utils.metrics import mae, mape, rmse
+from gnn_benchmark.utils.timing import WallTimer
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +180,17 @@ class DatasetResult:
         mape:         Mean Absolute Percentage Error (0–100 scale).
         per_horizon:  Per-step metrics ``{step: {"mae": ..., "rmse": ..., "mape": ...}}``
                       for every horizon step h=1..H.
+        train_compute_sec:     Pure compute seconds inside ``model.fit`` —
+                               forward + backward + step + criterion only,
+                               excluding DataLoader iteration and host↔device
+                               transfer. Reported by wrappers that override
+                               ``BenchmarkModel.get_train_compute_sec``;
+                               ``None`` for wrappers that don't.
+        inference_compute_sec: Same idea for ``model.predict``.
+        train_wall_sec:        Wall-clock seconds inside ``model.fit``,
+                               including DataLoader iteration and any data
+                               movement. Always populated.
+        inference_wall_sec:    Wall-clock seconds inside ``model.predict``.
         error:        Exception message if this dataset failed; other fields are ``None``.
     """
 
@@ -187,7 +199,23 @@ class DatasetResult:
     rmse: float | None = None
     mape: float | None = None
     per_horizon: dict[int, dict[str, float]] = field(default_factory=dict)
+    train_compute_sec: float | None = None
+    inference_compute_sec: float | None = None
+    train_wall_sec: float | None = None
+    inference_wall_sec: float | None = None
     error: str | None = None
+
+    # Deprecated aliases — keep so external callers and JSON dumps that
+    # already read ``train_time_sec`` / ``inference_time_sec`` keep
+    # working.  These point at the wall-clock numbers (the previous
+    # behaviour) so historical reports remain comparable.
+    @property
+    def train_time_sec(self) -> float | None:
+        return self.train_wall_sec
+
+    @property
+    def inference_time_sec(self) -> float | None:
+        return self.inference_wall_sec
 
 
 @dataclass
@@ -199,11 +227,15 @@ class BenchmarkResult:
         model_name:      Value of ``BenchmarkModel.name``.
         model_config:    Dict returned by ``BenchmarkModel.get_config()``.
         dataset_results: Mapping from dataset key to ``DatasetResult``.
+        tuning_compute_time_sec: Total seconds spent inside ``model.fit``
+            during hyperparameter tuning, when this benchmark run was
+            preceded by a tuning sweep. ``None`` for a vanilla evaluation.
     """
 
     model_name: str
     model_config: dict = field(default_factory=dict)
     dataset_results: dict[str, DatasetResult] = field(default_factory=dict)
+    tuning_compute_time_sec: float | None = None
 
     # Horizons highlighted in the per-dataset table
     _DISPLAY_HORIZONS = (1, 3, 6, 12)
@@ -252,6 +284,33 @@ class BenchmarkResult:
                 f"{'Avg':<10} {r.mae:>9.4f} {r.rmse:>9.4f} {r.mape:>8.2f}%"
             )
 
+            # Compute-budget block — distinguish pure compute (forward
+            # + backward + step + criterion) from outer wall-clock so
+            # data-loading overhead does not muddy the cross-model
+            # comparison. Pure compute is what wrappers expose via
+            # ``Stopwatch``; wall is the timed ``model.fit``/``predict``
+            # call. The two will be equal for wrappers that have not
+            # opted into per-batch timing.
+            if (
+                r.train_wall_sec is not None
+                or r.inference_wall_sec is not None
+                or r.train_compute_sec is not None
+                or r.inference_compute_sec is not None
+            ):
+                lines.append(thin)
+
+                def _fmt(v: float | None) -> str:
+                    return f"{v:.2f}s" if v is not None else "—"
+
+                lines.append(
+                    f"compute   train={_fmt(r.train_compute_sec)}  "
+                    f"inference={_fmt(r.inference_compute_sec)}"
+                )
+                lines.append(
+                    f"wall      train={_fmt(r.train_wall_sec)}  "
+                    f"inference={_fmt(r.inference_wall_sec)}"
+                )
+
             mae_vals.append(r.mae)
             rmse_vals.append(r.rmse)
             mape_vals.append(r.mape)
@@ -269,6 +328,80 @@ class BenchmarkResult:
                 f" {np.mean(mape_vals):>8.2f}%"
             )
 
+        # Compute-budget aggregate so the report can answer "how much
+        # GPU time did this model cost end-to-end". Both pure compute
+        # (per-batch Stopwatch) and outer wall-clock are summed so the
+        # gap reveals data-loading overhead.
+        def _sum_or_none(values: list[float]) -> float | None:
+            return sum(values) if values else None
+
+        train_compute = [
+            r.train_compute_sec
+            for r in self.dataset_results.values()
+            if r.train_compute_sec is not None
+        ]
+        infer_compute = [
+            r.inference_compute_sec
+            for r in self.dataset_results.values()
+            if r.inference_compute_sec is not None
+        ]
+        train_wall = [
+            r.train_wall_sec
+            for r in self.dataset_results.values()
+            if r.train_wall_sec is not None
+        ]
+        infer_wall = [
+            r.inference_wall_sec
+            for r in self.dataset_results.values()
+            if r.inference_wall_sec is not None
+        ]
+
+        if (
+            train_compute
+            or infer_compute
+            or train_wall
+            or infer_wall
+            or self.tuning_compute_time_sec is not None
+        ):
+            lines.append(thick)
+            lines.append("Compute budget (seconds, summed across datasets)")
+            lines.append(thin)
+            if self.tuning_compute_time_sec is not None:
+                lines.append(
+                    f"  hyperparameter search (sum of trial fit times): "
+                    f"{self.tuning_compute_time_sec:.2f}s"
+                )
+            tc = _sum_or_none(train_compute)
+            ic = _sum_or_none(infer_compute)
+            tw = _sum_or_none(train_wall)
+            iw = _sum_or_none(infer_wall)
+            if tc is not None or tw is not None:
+                lines.append(
+                    f"  training    compute={tc:.2f}s  wall={tw:.2f}s"
+                    if tc is not None and tw is not None
+                    else f"  training    wall={tw:.2f}s"
+                    if tw is not None
+                    else f"  training    compute={tc:.2f}s"
+                )
+            if ic is not None or iw is not None:
+                lines.append(
+                    f"  inference   compute={ic:.2f}s  wall={iw:.2f}s"
+                    if ic is not None and iw is not None
+                    else f"  inference   wall={iw:.2f}s"
+                    if iw is not None
+                    else f"  inference   compute={ic:.2f}s"
+                )
+
+        # Full configuration so the table is self-contained for results
+        # reporting — every hyperparameter that produced these numbers
+        # is on the page.
+        if self.model_config:
+            lines.append(thick)
+            lines.append("Model configuration")
+            lines.append(thin)
+            for key in sorted(self.model_config):
+                lines.append(f"  {key} = {self.model_config[key]!r}")
+
         lines.append(thick)
         lines.append("(metrics in original units)")
         return "\n".join(lines)
@@ -278,12 +411,17 @@ class BenchmarkResult:
         return {
             "model_name": self.model_name,
             "model_config": self.model_config,
+            "tuning_compute_time_sec": self.tuning_compute_time_sec,
             "datasets": {
                 name: {
                     "mae": r.mae,
                     "rmse": r.rmse,
                     "mape": r.mape,
                     "per_horizon": r.per_horizon,
+                    "train_compute_sec": r.train_compute_sec,
+                    "inference_compute_sec": r.inference_compute_sec,
+                    "train_wall_sec": r.train_wall_sec,
+                    "inference_wall_sec": r.inference_wall_sec,
                     "error": r.error,
                 }
                 for name, r in self.dataset_results.items()
@@ -336,6 +474,7 @@ class BenchmarkRunner:
         self,
         model: BenchmarkModel,
         config: Any = None,
+        tuning_compute_time_sec: float | None = None,
     ) -> BenchmarkResult:
         """
         Run the full benchmark for all configured datasets.
@@ -354,6 +493,11 @@ class BenchmarkRunner:
         Args:
             model:  A fitted or unfitted ``BenchmarkModel`` instance.
             config: Opaque config object forwarded to ``fit`` and ``predict``.
+            tuning_compute_time_sec:
+                Optional. When this run follows a hyperparameter sweep,
+                pass ``tuning_result.total_compute_time_sec`` so the
+                printed report attributes the search cost alongside the
+                final training and inference costs.
 
         Returns:
             ``BenchmarkResult`` with per-dataset and aggregate metrics.
@@ -367,6 +511,7 @@ class BenchmarkRunner:
         result = BenchmarkResult(
             model_name=model.name,
             model_config=model.get_config(),
+            tuning_compute_time_sec=tuning_compute_time_sec,
         )
 
         workspace = DataWorkspace(self.workspace_dir)
@@ -387,10 +532,30 @@ class BenchmarkRunner:
             if dr.error:
                 self._log(f"[{dataset_key}] FAILED — {dr.error}")
             else:
+                # Prefer the pure-compute number when the wrapper exposed
+                # one; fall back to wall-clock for legacy wrappers.
+                t_value = (
+                    dr.train_compute_sec
+                    if dr.train_compute_sec is not None
+                    else dr.train_wall_sec
+                )
+                i_value = (
+                    dr.inference_compute_sec
+                    if dr.inference_compute_sec is not None
+                    else dr.inference_wall_sec
+                )
+                tt = f"  train={t_value:.1f}s" if t_value is not None else ""
+                it = f"  infer={i_value:.2f}s" if i_value is not None else ""
                 self._log(
                     f"[{dataset_key}] Done  "
-                    f"MAE={dr.mae:.4f}  RMSE={dr.rmse:.4f}  MAPE={dr.mape:.2f}%"
+                    f"MAE={dr.mae:.4f}  RMSE={dr.rmse:.4f}  "
+                    f"MAPE={dr.mape:.2f}%{tt}{it}"
                 )
+
+        # Refresh model_config after the final fit so the report's
+        # configuration block reflects the hyperparameters that produced
+        # the printed metrics.
+        result.model_config = model.get_config() or result.model_config
 
         return result
 
@@ -479,17 +644,21 @@ class BenchmarkRunner:
     ) -> DatasetResult:
         prepared = self.prepare_dataset(workspace, dataset_key)
 
-        # 7. Fit
+        # 7. Fit (timed). ``train_wall_sec`` is the outer wall-clock,
+        # which still includes DataLoader iteration. The wrapper-level
+        # ``Stopwatch`` accessor exposes pure compute time alongside.
         self._log(f"[{dataset_key}] Fitting model …")
-        model.fit(
-            prepared.x_train, prepared.y_train,
-            prepared.x_val, prepared.y_val,
-            prepared.adj, config,
-        )
+        with WallTimer() as train_timer:
+            model.fit(
+                prepared.x_train, prepared.y_train,
+                prepared.x_val, prepared.y_val,
+                prepared.adj, config,
+            )
 
-        # 8. Predict
+        # 8. Predict (timed)
         self._log(f"[{dataset_key}] Predicting …")
-        y_pred = model.predict(prepared.x_test, prepared.adj, config)
+        with WallTimer() as infer_timer:
+            y_pred = model.predict(prepared.x_test, prepared.adj, config)
         y_pred = np.asarray(y_pred)
 
         y_test = prepared.y_test
@@ -526,6 +695,10 @@ class BenchmarkRunner:
             rmse=dataset_rmse,
             mape=dataset_mape,
             per_horizon=per_horizon,  # always populated (h=1..horizon)
+            train_wall_sec=train_timer.elapsed,
+            inference_wall_sec=infer_timer.elapsed,
+            train_compute_sec=model.get_train_compute_sec(),
+            inference_compute_sec=model.get_inference_compute_sec(),
         )
 
     def _log(self, msg: str) -> None:

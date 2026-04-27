@@ -24,6 +24,21 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
 from gnn_benchmark.models.STAEFormer.model.STAEformer import STAEformer
+from gnn_benchmark.utils.losses import masked_huber_loss
+from gnn_benchmark.utils.timing import Stopwatch
+
+
+def _fit_feature_scaler(
+    tensor: torch.Tensor, feature_dim: int, device: torch.device
+) -> "_FeatureScaler":
+    """NaN-aware per-feature z-score scaler fit (used for both x and y)."""
+    flat = tensor.reshape(-1, feature_dim)
+    mean = torch.nanmean(flat, dim=0)
+    diff_sq = (flat - mean) ** 2
+    count = (~torch.isnan(flat)).sum(dim=0).float()
+    std = torch.sqrt(torch.nansum(diff_sq, dim=0) / count)
+    std = torch.clamp(std, min=1e-8)
+    return _FeatureScaler(mean, std).to(device)
 
 
 # ---------------------------------------------------------------------------
@@ -42,12 +57,16 @@ class STAEFormerConfig:
     # Training hyper-parameters
     lr: float = 0.001
     weight_decay: float = 0.0003
-    milestones: list[int] = field(default_factory=lambda: [20, 30])
-    lr_decay_rate: float = 0.1
+    eps: float = 1e-8                        # Adam epsilon
     batch_size: int = 16
     max_epochs: int = 200
     early_stop: int = 30
-    clip_grad: float | None = None
+    clip_grad: float | None = 5.0            # gradient-norm clip; None disables
+
+    # LR scheduler (multi-step decay — unified across all benchmark models)
+    use_lr_scheduler: bool = True
+    lr_milestones: list[int] = field(default_factory=lambda: [20, 30])
+    lr_decay_ratio: float = 0.1
 
     # Architecture (paper defaults — override only if experimenting)
     input_embedding_dim: int = 24
@@ -56,6 +75,15 @@ class STAEFormerConfig:
     num_heads: int = 4
     num_layers: int = 3
     dropout: float = 0.1
+
+    # Time-of-day embedding. ``steps_per_day`` is the number of input
+    # timesteps per 24h period (288 for 5-min cadence, 24 for hourly,
+    # 96 for 15-min, 1 for daily). It only matters when
+    # ``tod_embedding_dim > 0``; the default keeps the embedding off
+    # because the harness does not provide a TOD feature column. Set
+    # both fields explicitly when wiring up TOD inputs by hand.
+    steps_per_day: int = 288
+    tod_embedding_dim: int = 0
 
     # Runtime
     seed: int | None = None
@@ -131,10 +159,13 @@ class STAEFormerModel(BenchmarkModel):
     def __init__(self) -> None:
         self._model: STAEformer | None = None
         self._scaler: _FeatureScaler | None = None
+        self._y_scaler: _FeatureScaler | None = None
         self._device: torch.device | None = None
         self._cfg: STAEFormerConfig | None = None
         self._out_steps: int | None = None
         self._output_dim: int | None = None
+        self._train_compute_sec: float = 0.0
+        self._infer_compute_sec: float = 0.0
 
     # ---- BenchmarkModel interface ----------------------------------------
 
@@ -169,18 +200,13 @@ class STAEFormerModel(BenchmarkModel):
         self._out_steps = out_steps
         self._output_dim = output_dim
 
-        # -- Fit scaler on x_train (per-feature, ignoring NaN) -------------
-        # Computed on CPU so we do not have to stage the full split on GPU.
-        # x_train: (S, T, N, D)
-        flat = x_train.reshape(-1, input_dim)  # (S*T*N, D)
-        mean = torch.nanmean(flat, dim=0)      # (D,)
-        # nanstd: manual since torch has no nanstd
-        diff_sq = (flat - mean) ** 2
-        count = (~torch.isnan(flat)).sum(dim=0).float()
-        std = torch.sqrt(torch.nansum(diff_sq, dim=0) / count)
-        std = torch.clamp(std, min=1e-8)
-        scaler = _FeatureScaler(mean, std).to(device)
+        # -- Fit scalers (per-feature z-score, NaN-aware) ------------------
+        # Separate y-scaler so inverse_transform uses target stats and
+        # never silently relies on "first D_out features are the targets".
+        scaler = _fit_feature_scaler(x_train, input_dim, device)
+        y_scaler = _fit_feature_scaler(y_train, output_dim, device)
         self._scaler = scaler
+        self._y_scaler = y_scaler
 
         # -- DataLoaders (splits stay on CPU; batches stream to device) ---
         # Keeping the raw tensors off GPU is the main memory saving: only
@@ -201,15 +227,19 @@ class STAEFormerModel(BenchmarkModel):
         )
 
         # -- Build model ---------------------------------------------------
+        # ``steps_per_day`` only feeds the time-of-day embedding when
+        # ``tod_embedding_dim > 0``; with the default 0 it is harmless,
+        # but the field is still configurable for users who wire TOD
+        # features into ``input_dim`` themselves.
         model = STAEformer(
             num_nodes=num_nodes,
             in_steps=in_steps,
             out_steps=out_steps,
-            steps_per_day=288,
+            steps_per_day=cfg.steps_per_day,
             input_dim=input_dim,
             output_dim=output_dim,
             input_embedding_dim=cfg.input_embedding_dim,
-            tod_embedding_dim=0,
+            tod_embedding_dim=cfg.tod_embedding_dim,
             dow_embedding_dim=0,
             spatial_embedding_dim=0,
             adaptive_embedding_dim=cfg.adaptive_embedding_dim,
@@ -221,15 +251,23 @@ class STAEFormerModel(BenchmarkModel):
         ).to(device)
 
         # -- Training setup ------------------------------------------------
-        criterion = nn.HuberLoss()
+        criterion = masked_huber_loss
         optimizer = torch.optim.Adam(
-            model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
+            model.parameters(),
+            lr=cfg.lr,
+            weight_decay=cfg.weight_decay,
+            eps=cfg.eps,
         )
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=cfg.milestones, gamma=cfg.lr_decay_rate,
-        )
+        scheduler = None
+        if cfg.use_lr_scheduler:
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(
+                optimizer,
+                milestones=cfg.lr_milestones,
+                gamma=cfg.lr_decay_ratio,
+            )
 
         # -- Training loop -------------------------------------------------
+        train_sw = Stopwatch()
         train_losses: list[float] = []
         val_losses: list[float] = []
         best_val_loss = float("inf")
@@ -241,21 +279,26 @@ class STAEFormerModel(BenchmarkModel):
             model.train()
             batch_losses: list[float] = []
             for x_batch, y_batch in train_loader:
+                # Host→device transfer + scaling are excluded from compute.
                 x_batch, y_batch = self._prepare_batch(
                     x_batch, y_batch, scaler, device,
                 )
-                out = model(x_batch)
-                out = scaler.inverse_transform(out)
-                loss = criterion(out, y_batch)
+                with train_sw:
+                    out = model(x_batch)
+                    out = y_scaler.inverse_transform(out)
+                    loss = criterion(out, y_batch)
 
-                optimizer.zero_grad()
-                loss.backward()
-                if cfg.clip_grad:
-                    nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad)
-                optimizer.step()
-                batch_losses.append(loss.item())
+                    optimizer.zero_grad()
+                    loss.backward()
+                    if cfg.clip_grad:
+                        nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad)
+                    optimizer.step()
+                    batch_loss = loss.item()
+                batch_losses.append(batch_loss)
 
-            scheduler.step()
+            with train_sw:
+                if scheduler is not None:
+                    scheduler.step()
             train_losses.append(float(np.mean(batch_losses)))
 
             # ---- validate ----
@@ -266,10 +309,12 @@ class STAEFormerModel(BenchmarkModel):
                     x_batch, y_batch = self._prepare_batch(
                         x_batch, y_batch, scaler, device,
                     )
-                    out = model(x_batch)
-                    out = scaler.inverse_transform(out)
-                    loss = criterion(out, y_batch)
-                    batch_losses_val.append(loss.item())
+                    with train_sw:
+                        out = model(x_batch)
+                        out = y_scaler.inverse_transform(out)
+                        loss = criterion(out, y_batch)
+                        batch_loss = loss.item()
+                    batch_losses_val.append(batch_loss)
             val_loss = float(np.mean(batch_losses_val))
             val_losses.append(val_loss)
 
@@ -291,6 +336,7 @@ class STAEFormerModel(BenchmarkModel):
         if best_state is not None:
             model.load_state_dict(best_state)
         self._model = model
+        self._train_compute_sec = train_sw.elapsed
 
         if device.type == "cuda":
             torch.cuda.empty_cache()
@@ -303,12 +349,13 @@ class STAEFormerModel(BenchmarkModel):
         adj: np.ndarray | None,
         config: Any,
     ) -> np.ndarray:
-        if self._model is None or self._scaler is None:
+        if self._model is None or self._scaler is None or self._y_scaler is None:
             raise RuntimeError("Call fit() before predict().")
 
         cfg = _resolve_config(config)
         device = self._device
         scaler = self._scaler
+        y_scaler = self._y_scaler
         model = self._model
 
         pin = device.type == "cuda"
@@ -319,16 +366,20 @@ class STAEFormerModel(BenchmarkModel):
             pin_memory=pin,
         )
 
+        infer_sw = Stopwatch()
         model.eval()
         preds: list[np.ndarray] = []
         with torch.no_grad():
             for (x_batch,) in loader:
                 x_batch = x_batch.to(device, non_blocking=pin)
                 x_batch = torch.nan_to_num(scaler.transform(x_batch))
-                out = model(x_batch)
-                out = scaler.inverse_transform(out)
-                preds.append(out.cpu().numpy())
+                with infer_sw:
+                    out = model(x_batch)
+                    out = y_scaler.inverse_transform(out)
+                    out_cpu = out.cpu().numpy()
+                preds.append(out_cpu)
 
+        self._infer_compute_sec = infer_sw.elapsed
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
@@ -338,6 +389,12 @@ class STAEFormerModel(BenchmarkModel):
         if self._cfg is None:
             return {}
         return asdict(self._cfg)
+
+    def get_train_compute_sec(self) -> float | None:
+        return self._train_compute_sec or None
+
+    def get_inference_compute_sec(self) -> float | None:
+        return self._infer_compute_sec or None
 
     # ---- Private helpers -------------------------------------------------
 
@@ -357,5 +414,5 @@ class STAEFormerModel(BenchmarkModel):
         x_batch = x_batch.to(device, non_blocking=non_blocking)
         y_batch = y_batch.to(device, non_blocking=non_blocking)
         x_batch = torch.nan_to_num(scaler.transform(x_batch))
-        y_batch = torch.nan_to_num(y_batch)
+        # Targets keep NaN so masked_huber_loss can ignore missing positions.
         return x_batch, y_batch

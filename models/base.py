@@ -144,3 +144,21 @@ class BenchmarkModel(ABC):
         The default implementation returns an empty dict.
         """
         return {}
+
+    # ------------------------------------------------------------------
+    # Compute-budget accessors
+    # ------------------------------------------------------------------
+    # Wrappers that wrap their per-batch forward/backward/step span with
+    # a :class:`gnn_benchmark.utils.timing.Stopwatch` should override
+    # these to expose the *pure compute* total — excluding DataLoader
+    # iteration and host↔device transfers — so the benchmark report can
+    # compare models on equal footing regardless of how each one stages
+    # its tensors.  Return ``None`` to indicate the wrapper does not
+    # measure compute separately; the harness will then fall back to the
+    # outer wall-clock number.
+
+    def get_train_compute_sec(self) -> float | None:
+        return None
+
+    def get_inference_compute_sec(self) -> float | None:
+        return None
