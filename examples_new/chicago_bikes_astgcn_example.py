@@ -2,7 +2,8 @@
 """ASTGCN on Chicago / Divvy bikeshare — fair-protocol hyperparameter tuning.
 
 See ``examples_new/_shared.py`` for the protocol.  Capacity axis:
-``nb_chev_filter``.  Reg axis: ``weight_decay``.
+``nb_chev_filter``.  Reg axis: ``weight_decay``.  Model-critical axis:
+``K`` (Chebyshev polynomial order), capped at 3.
 """
 
 from gnn_benchmark.models import ASTGCNConfig, ASTGCNModel
@@ -21,5 +22,6 @@ run_example(
         "lr":             LogUniform(LR_LOW, LR_HIGH),
         "weight_decay":   Categorical([0.0, 1e-5, 1e-4]),
         "nb_chev_filter": Categorical([32, 64]),
+        "K":              Categorical([2, 3]),
     },
 )

@@ -2,7 +2,7 @@
 """GWN on EU electricity load — fair-protocol hyperparameter tuning.
 
 See ``examples_new/_shared.py`` for the protocol.  Capacity axis: ``nhid``.
-Reg axis: ``dropout``.
+Reg axis: ``dropout``.  Model-critical axis: ``blocks`` (network depth).
 """
 
 from gnn_benchmark.models import GWNConfig, GWNModel
@@ -21,5 +21,6 @@ run_example(
         "lr":      LogUniform(LR_LOW, LR_HIGH),
         "dropout": Categorical([0.0, 0.1, 0.3, 0.5]),
         "nhid":    Categorical([16, 32, 64]),
+        "blocks":  Categorical([2, 3, 4]),
     },
 )

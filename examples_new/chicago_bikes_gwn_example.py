@@ -5,6 +5,7 @@ See ``examples_new/_shared.py`` for the protocol.  Uses the
 ``divvy-bikeshare-static`` registry entry, which restricts to a Loop +
 Near North Side + Lincoln Park bbox (N ≈ 515 stations) with a static
 haversine graph sparsified at 2 km.  Capacity axis: ``nhid``.
+Model-critical axis: ``blocks`` (depth), capped at 3 for memory.
 """
 
 from gnn_benchmark.models import GWNConfig, GWNModel
@@ -23,5 +24,6 @@ run_example(
         "lr":      LogUniform(LR_LOW, LR_HIGH),
         "dropout": Categorical([0.0, 0.1, 0.3]),
         "nhid":    Categorical([16, 32]),
+        "blocks":  Categorical([2, 3]),
     },
 )

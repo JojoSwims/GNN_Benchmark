@@ -4,6 +4,7 @@
 See ``examples_new/_shared.py`` for the protocol.  Capacity axis: ``nhid``;
 the upper end is capped at 32 here because GWN's skip/end channels scale
 as ``nhid * 8 / 16`` and N=859 already pushes activation memory.
+Model-critical axis: ``blocks`` (depth), capped at 3 for the same reason.
 """
 
 from gnn_benchmark.models import GWNConfig, GWNModel
@@ -22,5 +23,6 @@ run_example(
         "lr":      LogUniform(LR_LOW, LR_HIGH),
         "dropout": Categorical([0.0, 0.1, 0.3]),
         "nhid":    Categorical([16, 32]),
+        "blocks":  Categorical([2, 3]),
     },
 )

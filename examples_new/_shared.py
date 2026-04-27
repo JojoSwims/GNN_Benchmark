@@ -26,15 +26,31 @@ Earlier examples (now under ``examples_old/``) had a few fairness problems:
 
 Fair protocol used here
 -----------------------
-  * **Random search, n_trials=12, seed=0** for every (model, dataset) pair.
+  * **Random search, n_trials=16, seed=0** for every (model, dataset) pair.
   * **Training schedule depends only on the dataset** (memory budget):
-    `batch_size`, `max_epochs`, `early_stop`, and `lr_milestones` are pinned
-    in :data:`DATASET_SCHEDULE`, not in any single example.
-  * **Search space has the same shape for every model**: `lr` (LogUniform
-    1e-4..5e-3), one regularization knob (`dropout` where the model has it,
-    `weight_decay` for ASTGCN/GTS which don't), and one capacity axis (the
-    model's principal width parameter).
-  * **`lr` is sampled log-uniform**, the natural distribution for LR search.
+    `batch_size`, `max_epochs`, `early_stop`, `lr_milestones`, and
+    `lr_decay_ratio` are pinned in :data:`DATASET_SCHEDULE`, not in any
+    single example.  ``lr_decay_ratio=0.5`` is uniform across all models —
+    this overrides STAEFormer's and GTS's paper default of 0.1 so scheduler
+    aggressiveness is the same on every model.
+  * **Each model tunes 4 axes** with the same shape but a model-specific
+    fourth knob:
+
+      1. ``lr`` — universal ``LogUniform(1e-4, 5e-3)``.
+      2. **Regularization** — ``dropout`` for models that have it,
+         ``weight_decay`` for ASTGCN/GTS which don't.
+      3. **Capacity** — the model's principal width parameter.
+      4. **Model-critical knob** — the highest-leverage non-width
+         architecture knob for that model: ``blocks`` (GWN),
+         ``subgraph_size`` (MTGNN), ``solver_1`` (MTGODE), ``k_t``
+         (D2STGNN), ``num_layers`` (STAEFormer), ``K`` (ASTGCN),
+         ``max_diffusion_step`` (GTS).
+
+    Earlier ``examples_old/*`` already tuned several of these (``K``,
+    ``max_diffusion_step``, ``num_layers``); collapsing them all to
+    ``(lr, reg, capacity)`` lost real signal, so they're back here.
+  * **`lr` is sampled log-uniform**, the natural distribution for LR
+    search.
 
 Limits we don't claim to solve
 ------------------------------
@@ -56,7 +72,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 WORKSPACE = "./benchmark_workspace"
-N_TRIALS = 12
+N_TRIALS = 16
 SEED = 0
 STRATEGY = "random"
 

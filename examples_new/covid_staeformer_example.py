@@ -2,9 +2,11 @@
 """STAEFormer on NYC COVID — fair-protocol hyperparameter tuning.
 
 See ``examples_new/_shared.py`` for the protocol.  Capacity axis:
-``adaptive_embedding_dim``.  Spatial self-attention scales as N²·heads, so
-on N=3212 we drop ``num_layers`` to 1 and cap adaptive_embedding_dim at 16
-(``model_dim`` ∈ {32, 40}).  ``num_heads=4`` divides both.
+``adaptive_embedding_dim``, capped at 16 (``model_dim`` ∈ {32, 40}) because
+spatial self-attention scales as N²·heads·layers on N=3212.  Reg axis:
+``dropout``.  Model-critical axis: ``num_layers`` ∈ {1, 2} for memory.
+``num_heads=4`` divides both produced model_dims; ``feed_forward_dim``
+is also halved.
 """
 
 from gnn_benchmark.models import STAEFormerConfig, STAEFormerModel
@@ -17,7 +19,6 @@ base_config = apply_schedule(
     STAEFormerConfig(),
     DATASET,
     num_heads=4,
-    num_layers=1,
     feed_forward_dim=128,
 )
 
@@ -29,5 +30,6 @@ run_example(
         "lr":                     LogUniform(LR_LOW, LR_HIGH),
         "dropout":                Categorical([0.0, 0.1, 0.2]),
         "adaptive_embedding_dim": Categorical([8, 16]),
+        "num_layers":             Categorical([1, 2]),
     },
 )

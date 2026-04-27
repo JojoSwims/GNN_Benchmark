@@ -2,7 +2,8 @@
 """MTGODE on Chicago / Divvy bikeshare — fair-protocol hyperparameter tuning.
 
 See ``examples_new/_shared.py`` for the protocol.  Capacity axis:
-``conv_channels``.
+``conv_channels``.  Model-critical axis: ``solver_1`` (CTA ODE solver —
+Euler vs RK4).
 """
 
 from gnn_benchmark.models import MTGODEConfig, MTGODEModel
@@ -21,5 +22,6 @@ run_example(
         "lr":            LogUniform(LR_LOW, LR_HIGH),
         "dropout":       Categorical([0.0, 0.1, 0.3]),
         "conv_channels": Categorical([16, 32]),
+        "solver_1":      Categorical(["euler", "rk4"]),
     },
 )

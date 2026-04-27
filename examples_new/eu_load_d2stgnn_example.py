@@ -2,7 +2,8 @@
 """D2STGNN on EU electricity load — fair-protocol hyperparameter tuning.
 
 See ``examples_new/_shared.py`` for the protocol.  Capacity axis:
-``num_hidden``.  Reg axis: ``dropout``.
+``num_hidden``.  Reg axis: ``dropout``.  Model-critical axis: ``k_t``
+(temporal kernel order).
 """
 
 from gnn_benchmark.models import D2STGNNConfig, D2STGNNModel
@@ -21,5 +22,6 @@ run_example(
         "lr":         LogUniform(LR_LOW, LR_HIGH),
         "dropout":    Categorical([0.0, 0.1, 0.2, 0.3]),
         "num_hidden": Categorical([16, 32, 64]),
+        "k_t":        Categorical([2, 3, 4]),
     },
 )

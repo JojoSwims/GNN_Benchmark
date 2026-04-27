@@ -2,9 +2,9 @@
 """STAEFormer on EU electricity load — fair-protocol hyperparameter tuning.
 
 See ``examples_new/_shared.py`` for the protocol.  Capacity axis:
-``adaptive_embedding_dim`` (``model_dim`` = 24 + adaptive_emb).  Reg axis:
-``dropout``.  ``num_heads=4`` is fixed and divides every model_dim this
-search produces (40, 64, 104).
+``adaptive_embedding_dim``.  Reg axis: ``dropout``.  Model-critical axis:
+``num_layers`` (transformer depth).  ``num_heads=4`` is fixed and divides
+every model_dim this search produces (40, 64, 104).
 """
 
 from gnn_benchmark.models import STAEFormerConfig, STAEFormerModel
@@ -23,5 +23,6 @@ run_example(
         "lr":                     LogUniform(LR_LOW, LR_HIGH),
         "dropout":                Categorical([0.0, 0.1, 0.2, 0.3]),
         "adaptive_embedding_dim": Categorical([16, 40, 80]),
+        "num_layers":             Categorical([2, 3]),
     },
 )

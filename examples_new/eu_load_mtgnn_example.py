@@ -2,7 +2,8 @@
 """MTGNN on EU electricity load — fair-protocol hyperparameter tuning.
 
 See ``examples_new/_shared.py`` for the protocol.  Capacity axis:
-``conv_channels``.  Reg axis: ``dropout``.
+``conv_channels``.  Reg axis: ``dropout``.  Model-critical axis:
+``subgraph_size`` (top-K of the learned graph; N=49 here).
 """
 
 from gnn_benchmark.models import MTGNNConfig, MTGNNModel
@@ -18,8 +19,9 @@ run_example(
     base_config=base_config,
     dataset_key=DATASET,
     search_space={
-        "lr":            LogUniform(LR_LOW, LR_HIGH),
-        "dropout":       Categorical([0.0, 0.1, 0.3, 0.5]),
-        "conv_channels": Categorical([16, 32, 64]),
+        "lr":             LogUniform(LR_LOW, LR_HIGH),
+        "dropout":        Categorical([0.0, 0.1, 0.3, 0.5]),
+        "conv_channels":  Categorical([16, 32, 64]),
+        "subgraph_size":  Categorical([5, 10, 20]),
     },
 )

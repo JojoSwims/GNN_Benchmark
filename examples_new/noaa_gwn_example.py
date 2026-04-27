@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """GWN on NOAA buoys — fair-protocol hyperparameter tuning.
 
-See ``examples_new/_shared.py`` for the protocol (random search, 12 trials,
+See ``examples_new/_shared.py`` for the protocol (random search, 16 trials,
 log-uniform LR, dataset-pinned training schedule).  Capacity axis: ``nhid``,
 GWN's residual / dilation channel width.  Reg axis: ``dropout``.
+Model-critical axis: ``blocks`` (network depth — each block doubles the
+dilation footprint of the temporal convolutions).
 """
 
 from gnn_benchmark.models import GWNConfig, GWNModel
@@ -22,5 +24,6 @@ run_example(
         "lr":      LogUniform(LR_LOW, LR_HIGH),
         "dropout": Categorical([0.0, 0.1, 0.3, 0.5]),
         "nhid":    Categorical([16, 32, 64]),
+        "blocks":  Categorical([2, 3, 4]),
     },
 )

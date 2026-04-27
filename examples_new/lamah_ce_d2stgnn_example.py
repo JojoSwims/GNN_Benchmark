@@ -4,6 +4,8 @@
 See ``examples_new/_shared.py`` for the protocol.  Capacity axis:
 ``num_hidden``, capped at 32 because D2STGNN holds an N×N dynamic-graph
 scores tensor per layer (N=859 makes the upper end memory-tight).
+Model-critical axis: ``k_t`` (temporal kernel order); k_t scales the
+dynamic-graph compute per layer linearly, so capped at 3.
 """
 
 from gnn_benchmark.models import D2STGNNConfig, D2STGNNModel
@@ -22,5 +24,6 @@ run_example(
         "lr":         LogUniform(LR_LOW, LR_HIGH),
         "dropout":    Categorical([0.0, 0.1, 0.2]),
         "num_hidden": Categorical([16, 32]),
+        "k_t":        Categorical([2, 3]),
     },
 )

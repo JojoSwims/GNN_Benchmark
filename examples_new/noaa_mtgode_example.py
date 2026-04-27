@@ -2,7 +2,9 @@
 """MTGODE on NOAA buoys — fair-protocol hyperparameter tuning.
 
 See ``examples_new/_shared.py`` for the protocol.  Capacity axis:
-``conv_channels``.  Reg axis: ``dropout``.
+``conv_channels``.  Reg axis: ``dropout``.  Model-critical axis:
+``solver_1`` (CTA ODE solver — Euler vs RK4 dominates accuracy at fixed
+step size, more so than width).
 """
 
 from gnn_benchmark.models import MTGODEConfig, MTGODEModel
@@ -21,5 +23,6 @@ run_example(
         "lr":            LogUniform(LR_LOW, LR_HIGH),
         "dropout":       Categorical([0.0, 0.1, 0.3, 0.5]),
         "conv_channels": Categorical([16, 32, 64]),
+        "solver_1":      Categorical(["euler", "rk4"]),
     },
 )
