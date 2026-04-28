@@ -3,8 +3,8 @@
 
 See ``examples_new/_shared.py`` for the protocol; the per-model search
 space is defined in :mod:`gnn_benchmark.tuning.spaces`.  Spatial
-self-attention scales as N²·heads·layers, so on N=3212 we pin
-``num_layers=1`` and ``feed_forward_dim=128`` in the base config (and
+self-attention scales as N²·heads·layers, so on the large county graph we
+pin ``num_layers=1`` and ``feed_forward_dim=128`` in the base config (and
 drop both from the search), and cap ``adaptive_embedding_dim`` at 16
 (``model_dim`` ∈ {32, 40}).  ``num_heads=4`` divides both.
 """

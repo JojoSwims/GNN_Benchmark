@@ -4,7 +4,7 @@
 See ``examples_new/_shared.py`` for the protocol; the per-model search
 space is defined in :mod:`gnn_benchmark.tuning.spaces`.  ``num_hidden``
 is capped at 32 — D2STGNN's per-layer N×N dynamic-graph scores tensor is
-~40 MB at fp32 on N=3212 (gradients double that).
+large at fp32 on the county graph (gradients double that).
 """
 
 from gnn_benchmark.models import D2STGNNConfig, D2STGNNModel

@@ -3,7 +3,7 @@
 
 See ``examples_new/_shared.py`` for the protocol; the per-model search
 space is defined in :mod:`gnn_benchmark.tuning.spaces`.  ``conv_channels``
-is capped at 32 for the 3212-node graph.
+is capped at 32 for the large county graph.
 """
 
 from gnn_benchmark.models import MTGODEConfig, MTGODEModel

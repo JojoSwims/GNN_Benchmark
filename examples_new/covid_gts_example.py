@@ -3,8 +3,8 @@
 
 See ``examples_new/_shared.py`` for the protocol; the per-model search
 space is defined in :mod:`gnn_benchmark.tuning.spaces`.  ``rnn_units``
-is capped at 64 — GTS materialises an N×N learned graph (~10 M cells at
-N=3212), so the rnn width is the larger memory lever.
+is capped at 64 — GTS materialises an N×N learned graph, so the rnn
+width is the larger memory lever on the large county graph.
 """
 
 from gnn_benchmark.models import GTSConfig, GTSModel
