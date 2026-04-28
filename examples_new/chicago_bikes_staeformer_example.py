@@ -27,7 +27,7 @@ search_space = staeformer_search_space(
     lr_high=LR_HIGH,
     adaptive_embedding_dim=Categorical([16, 40]),
 )
-del search_space["num_layers"]  # pinned in base_config for the N=515 graph
+del search_space["num_layers"]  # pinned in base_config for the N≈195 graph
 
 run_example(
     model_factory=lambda: STAEFormerModel(),

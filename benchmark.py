@@ -114,15 +114,22 @@ DATASET_REGISTRY: dict[str, Any] = {
     "lamah-ce-dynamic":     LamaHCEDynamicLoader,
     "noaa-buoy":            NOAABuoyLoader,
     "gdelt-protest":        GDELTProtestLoader,
-    # Divvy Chicago bikeshare, 2024-03..2026-03 combined parquet.
-    # Restricted to the Loop + Near North Side + Lincoln Park bbox
-    # (N ≈ 515 stations). Static haversine edges sparsified with a
-    # 2 km cutoff so message-passing sees a local neighborhood
-    # instead of a nearly-uniform fully-connected graph.
+    # Divvy Chicago bikeshare, 2024-03..2026-03 combined parquet
+    # (after cross-era station-ID reconciliation). Restricted to the
+    # Loop + Near North Side + Lincoln Park bbox, sparsified static
+    # graph at 2 km haversine, winter (Dec-Jan-Feb) dropped, and
+    # stations below 30% activity rate (on departures+arrivals over
+    # the kept time grid) removed. Activity threshold is applied at
+    # the trip level so departures/arrivals are NOT inflated by flows
+    # to/from dropped stations. Note: winter drop produces a
+    # non-contiguous time axis at year boundaries — sliding windows
+    # will see Nov 30 → Mar 1 as adjacent rows.
     "divvy-bikeshare-static": lambda: DivvyBikeshareLoader(
         edges_mode="static",
         bbox=(41.87, 41.945, -87.67, -87.605),
         static_edge_cutoff_m=2000,
+        keep_months=(3, 4, 5, 6, 7, 8, 9, 10, 11),
+        min_active_fraction=0.30,
     ),
 }
 

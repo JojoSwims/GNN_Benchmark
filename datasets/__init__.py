@@ -60,7 +60,7 @@ Classes:
         proximity over the same node set.
 
     DivvyBikeshareLoader: Divvy Chicago bikeshare, March 2021 (677 stations,
-        hourly). Node features: departures, arrivals, member_ratio. Static
+        hourly). Node features: departures, arrivals. Static
         fully-connected haversine graph. Hourly directed trip-count dynamic
         graph bucketed by trip end-time (selectable via ``edges_mode``).
 Example:

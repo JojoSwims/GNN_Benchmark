@@ -28,9 +28,10 @@ GDRIVE_ID = "185BbpyzAS5YvKGfKtNCv3tlhPYKqNbX5"
 _CACHE_DIR = Path.home() / ".cache" / "gnn_benchmark" / "divvy_bikeshare"
 _CACHE_PATH = _CACHE_DIR / "divvy_tripdata_combined.parquet"
 
-# Repo-local path produced by scripts/combine_divvy_tripdata.py. If a
-# developer has already built the parquet locally, prefer that over
-# re-downloading the same file from Google Drive.
+# Repo-local path produced by scripts/combine_divvy_tripdata.py
+# (optionally with cross-era station-ID reconciliation already applied
+# upstream). If a developer has already built the parquet locally,
+# prefer that over re-downloading from Google Drive.
 _REPO_LOCAL_PATH = (
     Path(__file__).resolve().parent.parent
     / "datasets"
@@ -59,10 +60,11 @@ class DivvyBikeshareLoader(DatasetLoader):
     (built by ``scripts/combine_divvy_tripdata.py``). Nodes are bike
     stations (identified by ``start_station_id`` / ``end_station_id``).
     Three node features are emitted per station per time window:
-    ``departures`` (trips starting at the station, by ``started_at``),
-    ``arrivals`` (trips ending at the station, by ``ended_at``), and
-    ``member_ratio`` (fraction of departures made by annual members; NaN
-    when ``departures == 0``).
+    ``activity`` (= ``departures + arrivals``, the prediction target —
+    placed first because the model adapters' ``_FeatureScaler``
+    denormalizes outputs using the leading-channel mean/std),
+    ``departures`` (trips starting at the station, by ``started_at``)
+    and ``arrivals`` (trips ending at the station, by ``ended_at``).
 
     Two edge flavours are available via ``edges_mode``:
 
@@ -118,6 +120,22 @@ class DivvyBikeshareLoader(DatasetLoader):
             message-passing meaningful neighborhoods instead of
             global-mean averaging. Dataframe / CSV size shrinks
             proportionally.
+        keep_months: Optional tuple of calendar months (1-12) to keep.
+            Trips whose ``ended_at`` falls outside these months are
+            dropped, and the densified time grid is restricted to the
+            kept months. **Produces a non-contiguous time axis** at
+            year boundaries (e.g. Nov 30 → Mar 1 are adjacent rows);
+            downstream models / sliding-window code must be aware of
+            this. ``None`` keeps every month.
+        min_active_fraction: Optional float in [0, 1]. Drop stations
+            whose fraction of nonzero (departures+arrivals) cells over
+            the kept time grid is below this threshold. Trips with
+            either endpoint in a dropped station are removed entirely
+            before the final aggregation, so ``departures`` /
+            ``arrivals`` for kept stations reflect only flows within
+            the kept set (no inflation from dropped-station flows).
+            Computed on the same time grid that the IR uses, so
+            applying ``keep_months`` first changes the denominator.
     """
 
     data_path: Path | None = None
@@ -126,6 +144,8 @@ class DivvyBikeshareLoader(DatasetLoader):
     bbox: tuple[float, float, float, float] | None = None
     top_k_stations: int | None = None
     static_edge_cutoff_m: float | None = None
+    keep_months: tuple[int, ...] | None = None
+    min_active_fraction: float | None = None
 
     # Internal state populated during download_and_convert
     _node_order: list[str] = field(default_factory=list, init=False, repr=False)
@@ -145,6 +165,24 @@ class DivvyBikeshareLoader(DatasetLoader):
                 f"edges_mode must be one of {list(EDGE_MODES)}, "
                 f"got {self.edges_mode!r}"
             )
+        if self.keep_months is not None:
+            self.keep_months = tuple(sorted(set(int(m) for m in self.keep_months)))
+            if not self.keep_months or any(
+                m < 1 or m > 12 for m in self.keep_months
+            ):
+                raise ValueError(
+                    f"keep_months must be a non-empty subset of 1..12, "
+                    f"got {self.keep_months!r}"
+                )
+            if len(self.keep_months) == 12:
+                # All months kept = no-op; normalize to None for cache hygiene.
+                self.keep_months = None
+        if self.min_active_fraction is not None:
+            if not (0.0 <= self.min_active_fraction <= 1.0):
+                raise ValueError(
+                    f"min_active_fraction must be in [0, 1], got "
+                    f"{self.min_active_fraction!r}"
+                )
         if self.data_path is not None:
             self.data_path = Path(self.data_path)
         # else: resolved lazily in _resolve_data_path() — downloaded from
@@ -172,19 +210,23 @@ class DivvyBikeshareLoader(DatasetLoader):
             subset_tag += f"_topk{self.top_k_stations}"
         if self.static_edge_cutoff_m is not None:
             subset_tag += f"_cut{int(self.static_edge_cutoff_m)}m"
+        if self.keep_months is not None:
+            subset_tag += "_kM" + ",".join(str(m) for m in self.keep_months)
+        if self.min_active_fraction is not None:
+            subset_tag += f"_act{int(self.min_active_fraction * 100)}"
         source_name = self.data_path.name if self.data_path is not None else "GDrive:divvy_tripdata_combined.parquet"
         return DatasetInfo(
             name=f"divvy_bikeshare_{src_tag}{subset_tag}_{self.resolution}_{mode_tag}",
             url=f"https://drive.google.com/uc?id={GDRIVE_ID}",
             frequency=self.resolution,
             node_order=list(self._node_order),
-            feature_columns=["departures", "arrivals", "member_ratio"],
+            feature_columns=["activity", "departures", "arrivals"],
             units={
+                "activity": "trips",
                 "departures": "trips",
                 "arrivals": "trips",
-                "member_ratio": "fraction",
             },
-            window_config=WindowConfig(target_columns=["departures"]),
+            window_config=WindowConfig(target_columns=["activity"]),
             description=(
                 f"Divvy Chicago bikeshare (source={source_name}). "
                 f"Edge mode = {self.edges_mode!r}: {mode_desc}"
@@ -221,7 +263,9 @@ class DivvyBikeshareLoader(DatasetLoader):
         """Return an existing path to the source file.
 
         Preference order when ``self.data_path`` is None:
-          1. Repo-local parquet built by ``scripts/combine_divvy_tripdata.py``.
+          1. Repo-local combined parquet (output of
+             ``scripts/combine_divvy_tripdata.py``, optionally with
+             cross-era station-ID reconciliation already applied).
           2. Previously-downloaded cache file.
           3. Download from Google Drive to the cache.
         """
@@ -265,13 +309,12 @@ class DivvyBikeshareLoader(DatasetLoader):
             "start_lng",
             "end_lat",
             "end_lng",
-            "member_casual",
         ]
 
         if suffix == ".parquet":
             raw = pd.read_parquet(path, columns=needed_cols)
             # Parquet preserves dtypes; just ensure str for id columns
-            for col in ["ride_id", "start_station_id", "end_station_id", "member_casual"]:
+            for col in ["ride_id", "start_station_id", "end_station_id"]:
                 raw[col] = raw[col].astype("string")
         elif suffix == ".csv":
             raw = pd.read_csv(
@@ -281,7 +324,6 @@ class DivvyBikeshareLoader(DatasetLoader):
                     "ride_id": str,
                     "start_station_id": str,
                     "end_station_id": str,
-                    "member_casual": str,
                 },
                 parse_dates=["started_at", "ended_at"],
             )
@@ -335,7 +377,19 @@ class DivvyBikeshareLoader(DatasetLoader):
         n_oob = int((~mask).sum())
         raw = raw[mask]
 
-        # 6. Geographic / top-K station subset (optional).
+        # 6. Same-station round-trips (self loops). Done BEFORE the
+        # bbox / month / activity filters so the activity check reflects
+        # the trip set that actually ends up in the IR.
+        mask = raw["start_station_id"] != raw["end_station_id"]
+        n_self_loop = int((~mask).sum())
+        raw = raw[mask]
+
+        # 7. Duplicate ride_ids (safety net — combine script already dedupes).
+        before = len(raw)
+        raw = raw.drop_duplicates(subset="ride_id", keep="first")
+        n_dup_ride = before - len(raw)
+
+        # 8. Geographic / top-K station subset (optional).
         # Apply to the STATION set, then drop every trip with either
         # endpoint outside the kept set. This is critical: a trip with
         # origin=dropped and dest=kept would otherwise still contribute
@@ -388,15 +442,94 @@ class DivvyBikeshareLoader(DatasetLoader):
             n_crossing = int((~mask).sum())
             raw = raw[mask]
 
-        # 7. Same-station round-trips (self loops)
-        mask = raw["start_station_id"] != raw["end_station_id"]
-        n_self_loop = int((~mask).sum())
-        raw = raw[mask]
+        # 7. Calendar-month filter (optional). Drop trips whose
+        # ``started_at`` OR ``ended_at`` month is not in ``keep_months``.
+        # Both endpoints must fall inside the kept grid so that the
+        # trip contributes to both ``departures`` (bucket on
+        # ``started_at``) and ``arrivals`` (bucket on ``ended_at``)
+        # — otherwise a trip spanning the keep/drop month boundary
+        # would contribute to only one side, breaking the
+        # sum(departures) == sum(arrivals) invariant. The densified
+        # grid built later will mirror this — yielding a NON-CONTIGUOUS
+        # time axis at year boundaries (e.g. Nov 30 → Mar 1 are
+        # adjacent rows). Downstream sliding-window code must be aware.
+        n_month_drop = 0
+        if self.keep_months is not None:
+            mask = (
+                raw["started_at"].dt.month.isin(self.keep_months)
+                & raw["ended_at"].dt.month.isin(self.keep_months)
+            )
+            n_month_drop = int((~mask).sum())
+            raw = raw[mask]
+            if len(raw) == 0:
+                raise ValueError(
+                    f"keep_months={self.keep_months} dropped every trip. "
+                    "Check that the kept months overlap the data range."
+                )
 
-        # 8. Duplicate ride_ids (safety net — combine script already dedupes)
-        before = len(raw)
-        raw = raw.drop_duplicates(subset="ride_id", keep="first")
-        n_dup_ride = before - len(raw)
+        # 8. Activity-rate filter (optional). Drop stations whose
+        # nonzero (departures+arrivals) cell rate over the kept time
+        # grid is below ``min_active_fraction``.
+        #
+        # We iterate: each pass drops trips whose either endpoint is
+        # not in the current kept set, then recomputes activity on the
+        # surviving trips. Without iteration, kept stations that
+        # interacted heavily with now-dropped stations would have an
+        # inflated active-hour count from the FIRST pass and end up
+        # below threshold in the final IR. Iterating until the kept
+        # set stabilizes guarantees every kept station meets the
+        # threshold on the trips that actually appear in the IR.
+        n_activity_drop_stations = 0
+        n_activity_drop_trips = 0
+        if self.min_active_fraction is not None:
+            t_min = raw["ended_at"].min()
+            t_max = raw["ended_at"].max()
+            range_start = pd.Timestamp(t_min.year, t_min.month, 1)
+            range_end = pd.Timestamp(t_max.year, t_max.month, 1) + pd.offsets.MonthBegin(1)
+            grid = pd.date_range(
+                range_start, range_end, freq=self.resolution, inclusive="left"
+            )
+            if self.keep_months is not None:
+                grid = grid[grid.month.isin(self.keep_months)]
+            n_grid_cells = len(grid)
+            threshold_count = self.min_active_fraction * n_grid_cells
+
+            for _iteration in range(10):  # ≥99% of cases converge in ≤3
+                stacked = pd.concat(
+                    [
+                        pd.DataFrame({
+                            "node_id": raw["start_station_id"],
+                            "ts": raw["started_at"].dt.floor(self.resolution),
+                        }),
+                        pd.DataFrame({
+                            "node_id": raw["end_station_id"],
+                            "ts": raw["ended_at"].dt.floor(self.resolution),
+                        }),
+                    ],
+                    ignore_index=True,
+                )
+                active_hours = stacked.groupby("node_id")["ts"].nunique()
+                kept_act = set(
+                    active_hours[active_hours >= threshold_count].index
+                )
+                # Stations that fell below threshold this iteration.
+                fell_below = int((active_hours < threshold_count).sum())
+                if fell_below == 0:
+                    break
+                n_activity_drop_stations += fell_below
+                mask = (
+                    raw["start_station_id"].isin(kept_act)
+                    & raw["end_station_id"].isin(kept_act)
+                )
+                n_activity_drop_trips += int((~mask).sum())
+                raw = raw[mask]
+                if len(raw) == 0:
+                    raise ValueError(
+                        f"min_active_fraction={self.min_active_fraction} "
+                        f"dropped every trip (no station meets {threshold_count:.1f} "
+                        f"active hours over a grid of {n_grid_cells} cells). "
+                        "Relax the threshold."
+                    )
 
         raw = raw.reset_index(drop=True)
         n_final = len(raw)
@@ -408,6 +541,13 @@ class DivvyBikeshareLoader(DatasetLoader):
             subset_parts.append(f"{n_topk:,} stations below top-K")
         if n_crossing:
             subset_parts.append(f"{n_crossing:,} trips crossing into dropped stations")
+        if n_month_drop:
+            subset_parts.append(f"{n_month_drop:,} trips outside keep_months")
+        if n_activity_drop_stations:
+            subset_parts.append(
+                f"{n_activity_drop_stations:,} stations below min_active_fraction "
+                f"(dropping {n_activity_drop_trips:,} trips)"
+            )
         subset_msg = ("; subset filter dropped: " + ", ".join(subset_parts)) if subset_parts else ""
 
         print(
@@ -488,21 +628,11 @@ class DivvyBikeshareLoader(DatasetLoader):
             .rename(columns={"end_station_id": "node_id"})
         )
 
-        mem = (
-            raw.assign(
-                ts=raw["started_at"].dt.floor(freq),
-                is_member=(raw["member_casual"] == "member").astype("float32"),
-            )
-            .groupby(["ts", "start_station_id"])["is_member"]
-            .mean()
-            .rename("member_ratio")
-            .reset_index()
-            .rename(columns={"start_station_id": "node_id"})
-        )
-
         full_ts = pd.date_range(
             self._range_start, self._range_end, freq=freq, inclusive="left"
         )
+        if self.keep_months is not None:
+            full_ts = full_ts[full_ts.month.isin(self.keep_months)]
         grid = pd.MultiIndex.from_product(
             [full_ts, node_order], names=["ts", "node_id"]
         ).to_frame(index=False)
@@ -510,11 +640,15 @@ class DivvyBikeshareLoader(DatasetLoader):
         series = (
             grid.merge(dep, on=["ts", "node_id"], how="left")
             .merge(arr, on=["ts", "node_id"], how="left")
-            .merge(mem, on=["ts", "node_id"], how="left")
         )
         series["departures"] = series["departures"].fillna(0).astype("int32")
         series["arrivals"] = series["arrivals"].fillna(0).astype("int32")
-        series.loc[series["departures"] == 0, "member_ratio"] = np.nan
+        # `activity` is the sum and serves as the prediction target.
+        # It MUST be the first feature column so model adapters'
+        # _FeatureScaler.inverse_transform (which slices std[:D_out])
+        # denormalizes predictions using the right per-feature stats.
+        series["activity"] = (series["departures"] + series["arrivals"]).astype("int32")
+        series = series[["ts", "node_id", "activity", "departures", "arrivals"]]
 
         series = series.sort_values(["ts", "node_id"]).reset_index(drop=True)
         return series

@@ -3,8 +3,9 @@
 
 See ``examples_new/_shared.py`` for the protocol; the per-model search
 space is defined in :mod:`gnn_benchmark.tuning.spaces`.  ``rnn_units``
-is capped at 64 — DCGRU activations are (B, T, N, rnn_units) and N=515
-already pushes activation memory.
+is capped at 64 — DCGRU activations are (B, T, N, rnn_units) and the
+N≈195 graph (after bbox + min_active_fraction filtering) fits
+comfortably; the cap is kept for consistency with the protocol.
 """
 
 from gnn_benchmark.models import GTSConfig, GTSModel

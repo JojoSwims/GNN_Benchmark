@@ -3,7 +3,8 @@
 
 See ``examples_new/_shared.py`` for the protocol; the per-model search
 space is defined in :mod:`gnn_benchmark.tuning.spaces`.  ``nb_chev_filter``
-is capped at 64 for the 515-node graph.
+is capped at 64 for the ≈195-node graph (after bbox +
+min_active_fraction filtering).
 """
 
 from gnn_benchmark.models import ASTGCNConfig, ASTGCNModel

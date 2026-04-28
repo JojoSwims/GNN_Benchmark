@@ -3,7 +3,8 @@
 
 See ``examples_new/_shared.py`` for the protocol; the per-model search
 space is defined in :mod:`gnn_benchmark.tuning.spaces`.  Uses the
-``divvy-bikeshare-static`` registry entry (N ≈ 515 stations); ``nhid``
+``divvy-bikeshare-static`` registry entry (N ≈ 195 stations after
+bbox + min_active_fraction filtering); ``nhid``
 is capped at 32 because GWN's skip/end channels scale as ``nhid * 8 /
 16``.
 """
