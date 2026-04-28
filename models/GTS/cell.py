@@ -14,9 +14,17 @@ class LayerParams:
         self._biases_dict: dict[int, torch.nn.Parameter] = {}
         self._type = layer_type
 
-    def get_weights(self, shape: tuple[int, ...]) -> torch.nn.Parameter:
+    def get_weights(
+        self,
+        shape: tuple[int, ...],
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.nn.Parameter:
         if shape not in self._params_dict:
-            nn_param = torch.nn.Parameter(torch.empty(*shape))
+            nn_param = torch.nn.Parameter(
+                torch.empty(*shape, device=device, dtype=dtype)
+            )
             torch.nn.init.xavier_normal_(nn_param)
             self._params_dict[shape] = nn_param
             self._rnn_network.register_parameter(
@@ -24,9 +32,18 @@ class LayerParams:
             )
         return self._params_dict[shape]
 
-    def get_biases(self, length: int, bias_start: float = 0.0) -> torch.nn.Parameter:
+    def get_biases(
+        self,
+        length: int,
+        bias_start: float = 0.0,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.nn.Parameter:
         if length not in self._biases_dict:
-            biases = torch.nn.Parameter(torch.empty(length))
+            biases = torch.nn.Parameter(
+                torch.empty(length, device=device, dtype=dtype)
+            )
             torch.nn.init.constant_(biases, bias_start)
             self._biases_dict[length] = biases
             self._rnn_network.register_parameter(
@@ -114,9 +131,18 @@ class DCGRUCell(torch.nn.Module):
         state = torch.reshape(state, (batch_size * self._num_nodes, -1))
         inputs_and_state = torch.cat([inputs, state], dim=-1)
         input_size = inputs_and_state.shape[-1]
-        weights = self._fc_params.get_weights((input_size, output_size))
+        weights = self._fc_params.get_weights(
+            (input_size, output_size),
+            device=inputs_and_state.device,
+            dtype=inputs_and_state.dtype,
+        )
         value = torch.sigmoid(torch.matmul(inputs_and_state, weights))
-        biases = self._fc_params.get_biases(output_size, bias_start)
+        biases = self._fc_params.get_biases(
+            output_size,
+            bias_start,
+            device=inputs_and_state.device,
+            dtype=inputs_and_state.dtype,
+        )
         return value + biases
 
     def _gconv(
@@ -156,9 +182,16 @@ class DCGRUCell(torch.nn.Module):
         )
 
         weights = self._gconv_params.get_weights(
-            (input_size * num_matrices, output_size)
+            (input_size * num_matrices, output_size),
+            device=x.device,
+            dtype=x.dtype,
         )
         x = torch.matmul(x, weights)
-        biases = self._gconv_params.get_biases(output_size, bias_start)
+        biases = self._gconv_params.get_biases(
+            output_size,
+            bias_start,
+            device=x.device,
+            dtype=x.dtype,
+        )
         x = x + biases
         return torch.reshape(x, [batch_size, self._num_nodes * output_size])
