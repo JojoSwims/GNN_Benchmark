@@ -10,13 +10,20 @@ have been curated into two files hosted on Google Drive:
 ``prepare()`` downloads both files on first use with ``gdown`` and caches
 them under ``~/.cache/gnn_benchmark/noaa_buoy/``, so subsequent runs are
 offline and fast.
+
+Graph construction uses a two-pass approach:
+  1. Base threshold: add edges for all pairs within ``edge_threshold_km``.
+     Any node still isolated after this step is connected to its single
+     nearest neighbour (adaptive fallback).
+  2. Sparsification: greedily remove the longest edges while keeping each
+     node's degree at most ``max_degree``.  An edge is only removed when
+     it is not a bridge — i.e. both endpoints remain reachable without it.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from itertools import combinations
 from pathlib import Path
 
 import pandas as pd
@@ -57,6 +64,40 @@ def _default_cache_dir() -> Path:
     return Path.home() / ".cache" / "gnn_benchmark" / "noaa_buoy"
 
 
+def _distance_matrix_km(
+    coord_map: dict[str, tuple[float, float]],
+    station_ids: list[str],
+) -> "np.ndarray":
+    """Return an NxN float32 array of haversine distances in km."""
+    import numpy as np
+
+    n = len(station_ids)
+    D = np.zeros((n, n), dtype=np.float32)
+    for i in range(n):
+        lat_i, lon_i = coord_map[station_ids[i]]
+        for j in range(i + 1, n):
+            lat_j, lon_j = coord_map[station_ids[j]]
+            d = haversine_distance(lat_i, lon_i, lat_j, lon_j) / 1_000.0
+            D[i, j] = d
+            D[j, i] = d
+    return D
+
+
+def _bfs_connected(adj: list[set[int]], src: int, dst: int) -> bool:
+    """Return True if src and dst are connected in the adjacency-list graph."""
+    visited = {src}
+    stack = [src]
+    while stack:
+        node = stack.pop()
+        if node == dst:
+            return True
+        for nb in adj[node]:
+            if nb not in visited:
+                visited.add(nb)
+                stack.append(nb)
+    return False
+
+
 # ── Loader ────────────────────────────────────────────────────────────────────
 
 
@@ -74,16 +115,28 @@ class NOAABuoyLoader(DatasetLoader):
     Args:
         max_missing: Drop a buoy if its WSPD series has more than this
             fraction of missing values on the full hourly grid.
+        edge_threshold_km: Base distance cutoff for the first edge-building
+            pass.  Pairs beyond this distance receive no edge unless a buoy
+            would otherwise be completely isolated (adaptive fallback).
+        max_degree: Maximum neighbours per node after the sparsification
+            pass.  Long edges are removed greedily; edges that would
+            disconnect a subgraph (bridges) are kept even if they push a
+            node above this limit.
         cache_dir: Override the default cache location
             (``~/.cache/gnn_benchmark/noaa_buoy/``).
 
     Graph
     -----
-    Fully connected graph: every buoy pair gets an edge weighted by
-    haversine distance in km.
+    Two-pass sparse graph:
+      Pass 1 — keep pairs within ``edge_threshold_km``; connect isolated
+               nodes to their nearest neighbour.
+      Pass 2 — greedily drop the longest edges until every node has at
+               most ``max_degree`` neighbours, skipping bridges.
     """
 
     max_missing: float = 0.50
+    edge_threshold_km: float = 500.0
+    max_degree: int = 5
     cache_dir: Path | None = None
 
     _node_order: list[str] = field(default_factory=list, init=False, repr=False)
@@ -104,7 +157,9 @@ class NOAABuoyLoader(DatasetLoader):
                 f"(target, wind speed), WTMP (sea surface temp), WVHT "
                 f"(significant wave height), PRES (sea level pressure). "
                 f"Quality filter: WSPD <= {self.max_missing*100:.0f}% missing. "
-                f"Missing values kept as NaN. Edges: fully connected, "
+                f"Missing values kept as NaN. Edges: base threshold "
+                f"{self.edge_threshold_km:.0f} km + adaptive fallback + "
+                f"sparsification to max {self.max_degree} neighbours; "
                 f"weighted by haversine distance (km)."
             ),
         )
@@ -168,7 +223,9 @@ class NOAABuoyLoader(DatasetLoader):
         # 6. Build outputs
         series_df = self._build_series(filtered, good)
         coord_map = {sid: stations_map[sid] for sid in good if sid in stations_map}
-        edges_df = self._build_edges(coord_map, good)
+        edges_df = self._build_edges(
+            coord_map, good, self.edge_threshold_km, self.max_degree
+        )
         return series_df, edges_df
 
     # ── Private helpers ───────────────────────────────────────────────────────
@@ -206,14 +263,52 @@ class NOAABuoyLoader(DatasetLoader):
     def _build_edges(
         coord_map: dict[str, tuple[float, float]],
         station_ids: list[str],
+        edge_threshold_km: float,
+        max_degree: int,
     ) -> pd.DataFrame:
+        import numpy as np
+
+        n = len(station_ids)
+
+        # ── Distance matrix (km) ─────────────────────────────────────────────
+        D = _distance_matrix_km(coord_map, station_ids)
+
+        # ── Pass 1a: base threshold ───────────────────────────────────────────
+        adj: list[set[int]] = [
+            {j for j in range(n) if j != i and D[i, j] <= edge_threshold_km}
+            for i in range(n)
+        ]
+
+        # ── Pass 1b: adaptive fallback for isolated nodes ─────────────────────
+        D_masked = D.copy()
+        np.fill_diagonal(D_masked, np.inf)
+        for i in range(n):
+            if not adj[i]:
+                j = int(np.argmin(D_masked[i]))
+                adj[i].add(j)
+                adj[j].add(i)
+
+        # ── Pass 2: sparsification — remove long edges, skip bridges ─────────
+        all_edges = sorted(
+            ((i, j) for i in range(n) for j in adj[i] if i < j),
+            key=lambda e: D[e[0], e[1]],
+            reverse=True,
+        )
+        for u, v in all_edges:
+            if v not in adj[u]:
+                continue
+            if len(adj[u]) <= max_degree and len(adj[v]) <= max_degree:
+                continue
+            adj[u].discard(v)
+            adj[v].discard(u)
+            if not _bfs_connected(adj, u, v):
+                adj[u].add(v)
+                adj[v].add(u)
+
+        # ── Emit symmetric edge list ──────────────────────────────────────────
         rows: list[tuple[str, str, float]] = []
-        for a, b in combinations(station_ids, 2):
-            lat_a, lon_a = coord_map[a]
-            lat_b, lon_b = coord_map[b]
-            d_km = round(
-                haversine_distance(lat_a, lon_a, lat_b, lon_b) / 1_000.0, 1
-            )
-            rows.append((a, b, d_km))
-            rows.append((b, a, d_km))
+        for i in range(n):
+            for j in adj[i]:
+                d_km = round(D[i, j], 1)
+                rows.append((station_ids[i], station_ids[j], d_km))
         return pd.DataFrame(rows, columns=["src", "dst", "cost"])
