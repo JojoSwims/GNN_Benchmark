@@ -46,6 +46,7 @@ __all__ = [
     "DEFAULT_LR_LOW",
     "DEFAULT_LR_HIGH",
     "gwn_search_space",
+    "mlp_multivariate_search_space",
     "mtgnn_search_space",
     "gts_search_space",
     "d2stgnn_search_space",
@@ -68,6 +69,29 @@ def _build(
 ) -> dict[str, Sampler]:
     space.update(overrides)
     return space
+
+
+def mlp_multivariate_search_space(
+    lr_low: float = DEFAULT_LR_LOW,
+    lr_high: float = DEFAULT_LR_HIGH,
+    **overrides: Sampler,
+) -> dict[str, Sampler]:
+    """MLPMultivariate: lr + dropout + hidden_size + num_layers.
+
+    ``hidden_size`` is the single most impactful capacity knob — larger
+    values improve expressiveness but grow the parameter count quadratically
+    with the node count.  ``num_layers`` controls depth and rarely needs to
+    exceed 3 for this architecture.
+    """
+    return _build(
+        {
+            "lr":          LogUniform(lr_low, lr_high),
+            "dropout":     Categorical([0.0, 0.1, 0.2, 0.3]),
+            "hidden_size": Categorical([256, 512, 1024]),
+            "num_layers":  Categorical([1, 2, 3]),
+        },
+        overrides,
+    )
 
 
 def gwn_search_space(

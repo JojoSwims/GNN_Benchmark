@@ -26,6 +26,7 @@ from gnn_benchmark.models.astgcn import ASTGCNConfig, ASTGCNModel
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
 from gnn_benchmark.models.gwn import GWNConfig, GWNModel
 from gnn_benchmark.models.last_value import LastValueModel
+from gnn_benchmark.models.mlp_multivariate import MLPMultivariateConfig, MLPMultivariateModel
 from gnn_benchmark.models.mtgnn import MTGNNConfig, MTGNNModel
 from gnn_benchmark.models.mtgode import MTGODEConfig, MTGODEModel
 from gnn_benchmark.models.staeformer import STAEFormerConfig, STAEFormerModel
@@ -36,6 +37,8 @@ __all__ = [
     "BenchmarkModel",
     "TrainingHistory",
     "LastValueModel",
+    "MLPMultivariateModel",
+    "MLPMultivariateConfig",
     "STAEFormerModel",
     "STAEFormerConfig",
     "GWNModel",
