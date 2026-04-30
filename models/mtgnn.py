@@ -82,6 +82,12 @@ class MTGNNConfig:
     tanhalpha: float = 3.0
     layer_norm_affline: bool = True
 
+    # Ablation: drop the spatial component entirely. Routes every layer
+    # through MTGNN's existing `gcn_true=False` path (a 1×1 residual conv),
+    # ignoring both the predefined adjacency and the learned graph
+    # constructor. Overrides `gcn_true`/`buildA_true` when True.
+    no_graph: bool = False
+
     # LR scheduler (multi-step decay — unified across all benchmark models)
     use_lr_scheduler: bool = True
     lr_milestones: list[int] = field(default_factory=lambda: [20, 40, 60, 80])
@@ -239,15 +245,17 @@ class MTGNNModel(BenchmarkModel):
         # the second mode is actually usable end-to-end (callers can
         # tune ``buildA_true`` to compare the two).
         predefined_A: torch.Tensor | None = None
-        if not cfg.buildA_true and adj is not None:
+        if cfg.no_graph:
+            predefined_A = None
+        elif not cfg.buildA_true and adj is not None:
             predefined_A = torch.tensor(
                 np.asarray(adj, dtype=np.float32), device=device,
             )
 
         # -- Build model ---------------------------------------------------
         model = gtnet(
-            gcn_true=cfg.gcn_true,
-            buildA_true=cfg.buildA_true,
+            gcn_true=False if cfg.no_graph else cfg.gcn_true,
+            buildA_true=False if cfg.no_graph else cfg.buildA_true,
             gcn_depth=cfg.gcn_depth,
             num_nodes=num_nodes,
             device=device,

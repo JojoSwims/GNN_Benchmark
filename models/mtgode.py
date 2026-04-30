@@ -96,6 +96,15 @@ class MTGODEConfig:
     adjoint: bool = False
     perturb: bool = False
 
+    # Ablation: feed an identity adjacency through the existing
+    # `buildA_true=False` path. Inside the CGP block the self-loop +
+    # symmetric-normalization step collapses `I + I` to `I`, so the
+    # propagation `nconv(x, I) = x` and the ODE drift `0.5 * alpha *
+    # (x - x) = 0` — the graph propagation becomes a no-op. The temporal
+    # ODE, dilated inception convs, and end-convs stay intact. Overrides
+    # `buildA_true` and ignores any supplied adjacency.
+    no_graph: bool = False
+
     # LR scheduler (multi-step decay — unified across all benchmark models)
     use_lr_scheduler: bool = True
     lr_milestones: list[int] = field(default_factory=lambda: [20, 40, 60, 80])
@@ -251,14 +260,16 @@ class MTGODEModel(BenchmarkModel):
         # We forward the provided ``adj`` so the second mode is actually
         # usable (callers can tune ``buildA_true`` to compare the two).
         predefined_A: torch.Tensor | None = None
-        if not cfg.buildA_true and adj is not None:
+        if cfg.no_graph:
+            predefined_A = torch.eye(num_nodes, dtype=torch.float32, device=device)
+        elif not cfg.buildA_true and adj is not None:
             predefined_A = torch.tensor(
                 np.asarray(adj, dtype=np.float32), device=device,
             )
 
         # -- Build model ---------------------------------------------------
         model = MTGODE(
-            buildA_true=cfg.buildA_true,
+            buildA_true=False if cfg.no_graph else cfg.buildA_true,
             num_nodes=num_nodes,
             device=device,
             predefined_A=predefined_A,
