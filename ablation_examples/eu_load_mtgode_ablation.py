@@ -51,6 +51,7 @@ config = MTGODEConfig(
     time_2=1.0,
     use_lr_scheduler=True,
     weight_decay=1e-4,
+    no_graph=True,
 )
 
 run_ablation(model=MTGODEModel(), config=config, dataset_key=DATASET)

@@ -39,6 +39,7 @@ config = GWNConfig(
     seed=None,
     use_lr_scheduler=True,
     weight_decay=1e-4,
+    no_graph=True,
 )
 
 run_ablation(model=GWNModel(), config=config, dataset_key=DATASET)

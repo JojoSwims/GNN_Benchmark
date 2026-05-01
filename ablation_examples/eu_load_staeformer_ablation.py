@@ -39,6 +39,7 @@ config = STAEFormerConfig(
     tod_embedding_dim=0,
     use_lr_scheduler=True,
     weight_decay=3e-4,
+    no_graph=True,
 )
 
 run_ablation(model=STAEFormerModel(), config=config, dataset_key=DATASET)

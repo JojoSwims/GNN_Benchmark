@@ -46,6 +46,7 @@ config = MTGNNConfig(
     tanhalpha=3.0,
     use_lr_scheduler=True,
     weight_decay=1e-4,
+    no_graph=True,
 )
 
 run_ablation(model=MTGNNModel(), config=config, dataset_key=DATASET)

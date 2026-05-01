@@ -36,6 +36,7 @@ config = ASTGCNConfig(
     time_strides=1,
     use_lr_scheduler=True,
     weight_decay=1e-5,
+    no_graph=True,
 )
 
 run_ablation(model=ASTGCNModel(), config=config, dataset_key=DATASET)
