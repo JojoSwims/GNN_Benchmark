@@ -178,7 +178,7 @@ class ASTGCN(nn.Module):
 
     def __init__(
         self,
-        adj_mx: np.ndarray,
+        adj_mx: np.ndarray | None,
         nb_block: int,
         in_channels: int,
         K: int,
@@ -189,13 +189,26 @@ class ASTGCN(nn.Module):
         len_input: int,
         num_of_vertices: int,
         output_dim: int = 1,
+        no_graph: bool = False,
     ):
         super().__init__()
-        L_tilde = scaled_laplacian(adj_mx)
-        cheb_polys = [
-            torch.from_numpy(p).to(torch.float32)
-            for p in cheb_polynomials(L_tilde, K)
-        ]
+        if no_graph:
+            # No-graph ablation: replace every Chebyshev polynomial with the
+            # identity matrix. After `T_k.mul(spatial_attention)` the result is
+            # a per-batch diagonal, so the cheb conv becomes a per-node linear
+            # rescaled by each node's own attention score — no cross-node
+            # mixing. SpatialAttention parameters and Theta_k weights stay live.
+            cheb_polys = [
+                torch.eye(num_of_vertices, dtype=torch.float32) for _ in range(K)
+            ]
+        else:
+            if adj_mx is None:
+                raise ValueError("adj_mx is required when no_graph=False")
+            L_tilde = scaled_laplacian(adj_mx)
+            cheb_polys = [
+                torch.from_numpy(p).to(torch.float32)
+                for p in cheb_polynomials(L_tilde, K)
+            ]
 
         self.output_dim = output_dim
         self.num_for_predict = num_for_predict

@@ -85,6 +85,12 @@ class STAEFormerConfig:
     steps_per_day: int = 288
     tod_embedding_dim: int = 0
 
+    # Ablation: drop the spatial self-attention stack. Each node is then
+    # processed independently by the temporal attention stack (and the
+    # per-node output projection). The adaptive embedding stays intact
+    # because it is a per-node positional feature, not an adjacency.
+    no_graph: bool = False
+
     # Runtime
     seed: int | None = None
     device: str = "auto"  # "auto" | "cuda" | "cpu"
@@ -248,6 +254,7 @@ class STAEFormerModel(BenchmarkModel):
             num_layers=cfg.num_layers,
             dropout=cfg.dropout,
             use_mixed_proj=True,
+            use_spatial_attn=not cfg.no_graph,
         ).to(device)
 
         # -- Training setup ------------------------------------------------
