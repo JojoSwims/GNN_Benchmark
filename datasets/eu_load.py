@@ -104,6 +104,11 @@ class EULoadLoader(DatasetLoader):
                 "ENTSO-E EU zonal hourly electricity load (TotalLoad, MW). "
                 "Nodes are bidding-zone codes ordered alphabetically; the "
                 "series tensor and the adjacency share the same ordering. "
+                "Both the load series and any dynamic edges are stamped at "
+                "period-end: timestamp t covers the closed interval "
+                "(t-1h, t], so load[t] and adj[t] describe the same hour "
+                "and a model predicting t+1 from inputs ending at t never "
+                "consumes future information. "
                 f"Edge mode = {self.edges_mode!r}: {mode_desc}"
             ),
         )
