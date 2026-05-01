@@ -72,6 +72,13 @@ class ASTGCNConfig:
     nb_time_filter: int = 64
     time_strides: int = 1
 
+    # Ablation: replace the Chebyshev polynomials with identity matrices
+    # so the spatial graph convolution stops mixing across nodes (each
+    # node gets a per-node linear rescaled by its own spatial-attention
+    # score). Spatial/temporal attention parameters and Theta weights are
+    # preserved. When True the supplied adjacency is ignored.
+    no_graph: bool = False
+
     # LR scheduler (multi-step decay — unified across all benchmark models)
     use_lr_scheduler: bool = True
     lr_milestones: list[int] = field(default_factory=lambda: [20, 40, 60, 80])
@@ -170,10 +177,9 @@ class ASTGCNModel(BenchmarkModel):
         adj: np.ndarray | None,
         config: Any,
     ) -> TrainingHistory:
-        if adj is None:
-            raise ValueError("adj is required")
-
         cfg = _resolve_config(config)
+        if adj is None and not cfg.no_graph:
+            raise ValueError("adj is required")
         self._cfg = cfg
 
         if cfg.seed is not None:
@@ -221,7 +227,7 @@ class ASTGCNModel(BenchmarkModel):
         )
 
         # -- Build model ---------------------------------------------------
-        adj_mx = np.asarray(adj, dtype=np.float32)
+        adj_mx = None if cfg.no_graph else np.asarray(adj, dtype=np.float32)
         model = ASTGCN(
             adj_mx=adj_mx,
             nb_block=cfg.nb_block,
@@ -234,6 +240,7 @@ class ASTGCNModel(BenchmarkModel):
             len_input=in_steps,
             num_of_vertices=num_nodes,
             output_dim=output_dim,
+            no_graph=cfg.no_graph,
         ).to(device)
 
         # -- Training setup ------------------------------------------------

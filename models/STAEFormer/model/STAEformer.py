@@ -126,6 +126,7 @@ class STAEformer(nn.Module):
         num_layers=3,
         dropout=0.1,
         use_mixed_proj=True,
+        use_spatial_attn=True,
     ):
         super().__init__()
 
@@ -150,6 +151,7 @@ class STAEformer(nn.Module):
         self.num_heads = num_heads
         self.num_layers = num_layers
         self.use_mixed_proj = use_mixed_proj
+        self.use_spatial_attn = use_spatial_attn
 
         self.input_proj = nn.Linear(input_dim, input_embedding_dim)
         if tod_embedding_dim > 0:
@@ -181,12 +183,19 @@ class STAEformer(nn.Module):
             ]
         )
 
-        self.attn_layers_s = nn.ModuleList(
-            [
-                SelfAttentionLayer(self.model_dim, feed_forward_dim, num_heads, dropout)
-                for _ in range(num_layers)
-            ]
-        )
+        if use_spatial_attn:
+            self.attn_layers_s = nn.ModuleList(
+                [
+                    SelfAttentionLayer(self.model_dim, feed_forward_dim, num_heads, dropout)
+                    for _ in range(num_layers)
+                ]
+            )
+        else:
+            # No-graph ablation: skip cross-node mixing entirely. Each node
+            # is processed independently by the temporal stack + per-node
+            # output projection. Adaptive embedding stays intact since it
+            # is a per-node identity feature, not an adjacency.
+            self.attn_layers_s = nn.ModuleList()
 
     def forward(self, x):
         # x: (batch_size, in_steps, num_nodes, input_dim+tod+dow=3)

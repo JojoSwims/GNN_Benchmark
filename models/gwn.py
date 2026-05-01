@@ -86,6 +86,12 @@ class GWNConfig:
     addaptadj: bool = True
     adjtype: str = "doubletransition"
 
+    # Ablation: drop the spatial component entirely. Routes every layer
+    # through GWN's existing `gcn_bool=False` path (a 1×1 residual conv),
+    # ignoring `supports` and the adaptive adjacency. Overrides
+    # `gcn_bool`/`addaptadj` when True.
+    no_graph: bool = False
+
     # LR scheduler (multi-step decay — unified across all benchmark models)
     use_lr_scheduler: bool = True
     lr_milestones: list[int] = field(default_factory=lambda: [20, 40, 60, 80])
@@ -268,7 +274,10 @@ class GWNModel(BenchmarkModel):
         y_val_d = y_val.to(device)
 
         # -- Build graph supports ------------------------------------------
-        supports, aptinit = _build_supports(adj, cfg.adjtype, device)
+        if cfg.no_graph:
+            supports, aptinit = None, None
+        else:
+            supports, aptinit = _build_supports(adj, cfg.adjtype, device)
 
         # -- DataLoaders ---------------------------------------------------
         train_loader = DataLoader(
@@ -288,8 +297,8 @@ class GWNModel(BenchmarkModel):
             num_nodes=num_nodes,
             dropout=cfg.dropout,
             supports=supports,
-            gcn_bool=cfg.gcn_bool,
-            addaptadj=cfg.addaptadj,
+            gcn_bool=False if cfg.no_graph else cfg.gcn_bool,
+            addaptadj=False if cfg.no_graph else cfg.addaptadj,
             aptinit=aptinit,
             in_dim=input_dim,
             out_dim=out_steps * output_dim,
