@@ -52,6 +52,7 @@ Notes
 
 from __future__ import annotations
 
+import inspect
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -137,6 +138,27 @@ DATASET_REGISTRY: dict[str, Any] = {
         keep_months=(3, 4, 5, 6, 7, 8, 9, 10, 11),
         min_active_fraction=0.30,
     ),
+    # Same Divvy subset as ``divvy-bikeshare-static`` but with hourly
+    # directed trip-count snapshots instead of the haversine
+    # adjacency; consumed by Dyn-GWN. ``edges_mode="dynamic"`` skips
+    # the static graph entirely so the model contract's ``adj`` is None
+    # and the dynamic tensor is the only graph signal.
+    "divvy-bikeshare-dynamic": lambda: DivvyBikeshareLoader(
+        edges_mode="dynamic",
+        bbox=(41.87, 41.945, -87.67, -87.605),
+        keep_months=(3, 4, 5, 6, 7, 8, 9, 10, 11),
+        min_active_fraction=0.30,
+    ),
+    # Both static haversine adjacency and hourly dynamic snapshots. Dyn-GWN
+    # uses the static one as its ``supports`` and the dynamic tensor for
+    # the time-varying branch.
+    "divvy-bikeshare-both": lambda: DivvyBikeshareLoader(
+        edges_mode="both",
+        bbox=(41.87, 41.945, -87.67, -87.605),
+        static_edge_cutoff_m=2000,
+        keep_months=(3, 4, 5, 6, 7, 8, 9, 10, 11),
+        min_active_fraction=0.30,
+    ),
 }
 
 
@@ -179,6 +201,17 @@ class PreparedDataset:
     adj: np.ndarray | None
     window_config: Any
     split_config: Any
+    # Optional dynamic-graph payload, populated when the IR carries
+    # ``dynamic_edges``. ``dynamic_adj_full`` is the densified
+    # ``(T_total, N, N)`` snapshot tensor aligned with the series's
+    # sorted-unique timestamps; ``dynamic_window_starts_*`` map every
+    # sliding window in ``x_*`` to its first timestep along that axis
+    # so dynamic-graph models can slice per-batch without rebuilding
+    # the table.
+    dynamic_adj_full: np.ndarray | None = None
+    dynamic_window_starts_train: np.ndarray | None = None
+    dynamic_window_starts_val: np.ndarray | None = None
+    dynamic_window_starts_test: np.ndarray | None = None
 
 
 @dataclass
@@ -635,6 +668,28 @@ class BenchmarkRunner:
         # 6. Adjacency
         adj = ir.get_adjacency_matrix() if ir.edges is not None else None
 
+        # 7. Dynamic adjacency payload (only when the IR carries
+        # snapshots). Window-start indices are derived to match the
+        # ``create_sliding_windows`` layout: window i covers
+        # data[i : i + input_length] along the time axis.
+        dynamic_adj_full: np.ndarray | None = None
+        dyn_starts_train: np.ndarray | None = None
+        dyn_starts_val: np.ndarray | None = None
+        dyn_starts_test: np.ndarray | None = None
+        if ir.dynamic_edges is not None:
+            self._log(f"[{dataset_key}] Building dynamic adjacency …")
+            dynamic_adj_full = ir.get_dynamic_adjacency_full()
+            T = dynamic_adj_full.shape[0]
+            num_windows = (
+                T - wc.input_length - wc.y_start - wc.horizon + 2
+            )
+            all_starts = np.arange(num_windows, dtype=np.int64)
+            train_end = int(num_windows * sc.train_ratio)
+            val_end = int(num_windows * (sc.train_ratio + sc.val_ratio))
+            dyn_starts_train = all_starts[:train_end]
+            dyn_starts_val = all_starts[train_end:val_end]
+            dyn_starts_test = all_starts[val_end:]
+
         return PreparedDataset(
             dataset_name=dataset_key,
             x_train=x_train_t,
@@ -646,7 +701,29 @@ class BenchmarkRunner:
             adj=adj,
             window_config=wc,
             split_config=sc,
+            dynamic_adj_full=dynamic_adj_full,
+            dynamic_window_starts_train=dyn_starts_train,
+            dynamic_window_starts_val=dyn_starts_val,
+            dynamic_window_starts_test=dyn_starts_test,
         )
+
+    @staticmethod
+    def _accepted_kwargs(fn: Any, candidates: dict[str, Any]) -> dict[str, Any]:
+        """Filter ``candidates`` to the kwargs ``fn`` actually accepts.
+
+        Models that don't opt into dynamic-adjacency plumbing keep their
+        original ``fit(x_train, ..., adj, config)`` signature; passing
+        unknown kwargs would break them. Inspecting the signature lets
+        the runner extend the contract without churning every wrapper.
+        """
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            return {}
+        params = sig.parameters
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return candidates
+        return {k: v for k, v in candidates.items() if k in params}
 
     def _run_dataset(
         self,
@@ -657,6 +734,26 @@ class BenchmarkRunner:
     ) -> DatasetResult:
         prepared = self.prepare_dataset(workspace, dataset_key)
 
+        # Optional dynamic-graph kwargs — passed only to wrappers whose
+        # ``fit``/``predict`` declare them, so existing wrappers stay
+        # untouched. See :meth:`_accepted_kwargs`.
+        fit_extra: dict[str, Any] = {}
+        predict_extra: dict[str, Any] = {}
+        if prepared.dynamic_adj_full is not None:
+            fit_extra = {
+                "dynamic_adj_full": prepared.dynamic_adj_full,
+                "dynamic_window_starts": prepared.dynamic_window_starts_train,
+                "dynamic_window_starts_val":
+                    prepared.dynamic_window_starts_val,
+            }
+            predict_extra = {
+                "dynamic_adj_full": prepared.dynamic_adj_full,
+                "dynamic_window_starts":
+                    prepared.dynamic_window_starts_test,
+            }
+        fit_extra = self._accepted_kwargs(model.fit, fit_extra)
+        predict_extra = self._accepted_kwargs(model.predict, predict_extra)
+
         # 7. Fit (timed). ``train_wall_sec`` is the outer wall-clock,
         # which still includes DataLoader iteration. The wrapper-level
         # ``Stopwatch`` accessor exposes pure compute time alongside.
@@ -666,12 +763,15 @@ class BenchmarkRunner:
                 prepared.x_train, prepared.y_train,
                 prepared.x_val, prepared.y_val,
                 prepared.adj, config,
+                **fit_extra,
             )
 
         # 8. Predict (timed)
         self._log(f"[{dataset_key}] Predicting …")
         with WallTimer() as infer_timer:
-            y_pred = model.predict(prepared.x_test, prepared.adj, config)
+            y_pred = model.predict(
+                prepared.x_test, prepared.adj, config, **predict_extra
+            )
         y_pred = np.asarray(y_pred)
 
         y_test = prepared.y_test

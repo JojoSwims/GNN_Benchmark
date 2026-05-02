@@ -24,6 +24,7 @@ Example::
 
 from gnn_benchmark.models.astgcn import ASTGCNConfig, ASTGCNModel
 from gnn_benchmark.models.base import BenchmarkModel, TrainingHistory
+from gnn_benchmark.models.dyngwn import DynGWNConfig, DynGWNModel
 from gnn_benchmark.models.gwn import GWNConfig, GWNModel
 from gnn_benchmark.models.last_value import LastValueModel
 from gnn_benchmark.models.mlp_multivariate import MLPMultivariateConfig, MLPMultivariateModel
@@ -43,6 +44,8 @@ __all__ = [
     "STAEFormerConfig",
     "GWNModel",
     "GWNConfig",
+    "DynGWNModel",
+    "DynGWNConfig",
     "MTGNNModel",
     "MTGNNConfig",
     "MTGODEModel",
