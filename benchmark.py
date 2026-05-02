@@ -108,6 +108,12 @@ DATASET_REGISTRY: dict[str, Any] = {
     "beijing-air-cluster2": Cluster2AirLoader,
     "elergone":             ElergoneLoader,
     "eu-load":              EULoadLoader,
+    # Same ENTSO-E zonal load series, but with hourly directed
+    # cross-zone flow snapshots (MW) instead of the static
+    # interconnection adjacency. Bucketed by the source file's stamped
+    # hour, dropping self-loops and zero-flow rows.
+    "eu-load-dynamic":      lambda: EULoadLoader(edges_mode="dynamic"),
+    "eu-load-both":         lambda: EULoadLoader(edges_mode="both"),
     "nyiso":                NYISOLoader,
     "nyc-covid":            NYCovidLoader,
     "mel-peds":             MelPedsLoader,

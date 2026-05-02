@@ -30,7 +30,9 @@ Classes:
         No graph structure provided.
 
     EULoadLoader: ENTSO-E European zonal electricity load (hourly, MW).
-        Undirected, unweighted cross-zone interconnection edges.
+        Undirected, unweighted cross-zone interconnection edges (static)
+        and/or hourly directed cross-zone flow snapshots (dynamic),
+        selectable via ``edges_mode``.
         Requires `gdown` package for Google Drive download.
 
     NYISOLoader: NYISO Integrated Load dataset (11 regions, hourly).
