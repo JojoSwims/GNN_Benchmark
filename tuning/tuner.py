@@ -352,11 +352,24 @@ class HyperparameterTuner:
             compute_elapsed = 0.0
             try:
                 model = self.model_factory()
+                # Match the runner's contract extension: pass
+                # dynamic-graph kwargs to wrappers that declare them.
+                fit_extra: dict[str, Any] = {}
+                if prepared.dynamic_adj_full is not None:
+                    fit_extra = {
+                        "dynamic_adj_full": prepared.dynamic_adj_full,
+                        "dynamic_window_starts":
+                            prepared.dynamic_window_starts_train,
+                        "dynamic_window_starts_val":
+                            prepared.dynamic_window_starts_val,
+                    }
+                fit_extra = runner._accepted_kwargs(model.fit, fit_extra)
                 with WallTimer() as timer:
                     history = model.fit(
                         prepared.x_train, prepared.y_train,
                         prepared.x_val, prepared.y_val,
                         prepared.adj, trial_cfg,
+                        **fit_extra,
                     )
                 # Prefer the wrapper's per-batch compute total when it
                 # exposes one (the per-batch Stopwatch excludes

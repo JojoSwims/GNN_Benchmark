@@ -103,6 +103,18 @@ DATASET_SCHEDULE: dict[str, dict[str, Any]] = {
         batch_size=16, max_epochs=20, early_stop=7,
         lr_milestones=[10, 15], lr_decay_ratio=0.5,
     ),
+    "divvy-bikeshare-dynamic": dict(
+        batch_size=16, max_epochs=20, early_stop=7,
+        lr_milestones=[10, 15], lr_decay_ratio=0.5,
+    ),
+    "divvy-bikeshare-both": dict(
+        batch_size=16, max_epochs=20, early_stop=7,
+        lr_milestones=[10, 15], lr_decay_ratio=0.5,
+    ),
+    "eu-load-dynamic": dict(
+        batch_size=32, max_epochs=20, early_stop=7,
+        lr_milestones=[10, 15], lr_decay_ratio=0.5,
+    ),
 }
 
 

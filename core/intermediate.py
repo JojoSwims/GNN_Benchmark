@@ -166,6 +166,69 @@ class IntermediateRepresentation:
 
         return adj
 
+    def get_dynamic_adjacency_full(
+        self, default_diagonal: float = 0.0
+    ) -> np.ndarray:
+        """Return the full ``(T, N, N)`` dynamic-adjacency tensor.
+
+        Densifies every snapshot in :attr:`dynamic_edges` against the
+        sorted-unique series timestamps so the time axis aligns with
+        :meth:`to_tensor`'s ``T`` dimension. Snapshots absent from
+        ``dynamic_edges`` (e.g. quiet hours with no recorded flow)
+        contribute an all-zero matrix.
+
+        Implementation note: the :meth:`get_dynamic_adjacency_snapshot`
+        helper is fine for one-off lookups but iterates DataFrame rows
+        with ``iterrows`` per snapshot, which is O(T·E) and far too slow
+        for the harness — building the full tensor hits ~30k snapshots
+        for divvy and ~17k for eu_load.  This method does a single
+        vectorised scatter over the whole table.
+
+        Returns:
+            float32 numpy array of shape ``(T, N, N)``.
+
+        Raises:
+            ValueError: If no dynamic edges are defined.
+        """
+        if self.dynamic_edges is None:
+            raise ValueError("No dynamic edges defined for this IR")
+
+        nodes = self.nodes
+        N = len(nodes)
+        node_to_idx = {str(n): i for i, n in enumerate(nodes)}
+
+        timestamps = self.timestamps
+        T = len(timestamps)
+        ts_to_idx = {ts: i for i, ts in enumerate(timestamps)}
+
+        adj = np.zeros((T, N, N), dtype=np.float32)
+        if default_diagonal != 0.0:
+            diag = np.broadcast_to(
+                np.eye(N, dtype=np.float32) * default_diagonal,
+                (T, N, N),
+            )
+            adj = adj + diag
+
+        df = self.dynamic_edges
+        # Vectorise the scatter — pandas .map gives O(E) vs ~O(E*T)
+        # for a per-snapshot loop over the table.
+        t_idx = df["ts"].map(ts_to_idx).to_numpy()
+        s_idx = df["src"].astype(str).map(node_to_idx).to_numpy()
+        d_idx = df["dst"].astype(str).map(node_to_idx).to_numpy()
+        cost = df["cost"].to_numpy(dtype=np.float32)
+
+        valid = (
+            ~pd.isna(t_idx) & ~pd.isna(s_idx) & ~pd.isna(d_idx)
+        )
+        if not valid.all():
+            t_idx = t_idx[valid]
+            s_idx = s_idx[valid]
+            d_idx = d_idx[valid]
+            cost = cost[valid]
+
+        adj[t_idx.astype(np.int64), s_idx.astype(np.int64), d_idx.astype(np.int64)] = cost
+        return adj
+
     def get_adjacency_matrix(self, default_diagonal: float = 0.0) -> np.ndarray:
         """
         Convert edges DataFrame to NxN numpy array.
