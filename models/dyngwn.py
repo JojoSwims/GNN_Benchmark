@@ -28,12 +28,10 @@ softmax-on-destinations the model applies.
 from __future__ import annotations
 
 import copy
-import math
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -91,6 +89,13 @@ class DynGWNConfig:
     # absolute value.  ``"identity"`` passes raw flow through (matches
     # the upstream demo path; can blow up the inner softmax).
     flow_transform: str = "log1p_abs_rownorm"
+    # Where to cache the pre-processed (T_total, N*N) snapshot tensor.
+    # ``"auto"`` keeps it on the training device when it fits within
+    # ``dynamic_adj_gpu_max_mb`` (eu_load is tens of MB; divvy is GBs)
+    # and otherwise leaves it pinned on the host. ``"cuda"`` / ``"cpu"``
+    # force one or the other.
+    dynamic_adj_device: str = "auto"
+    dynamic_adj_gpu_max_mb: float = 1024.0
 
     # LR scheduler
     use_lr_scheduler: bool = True
@@ -262,7 +267,7 @@ class DynGWNModel(BenchmarkModel):
 
     The harness already populates these for any IR with
     ``dynamic_edges`` (currently ``divvy-bikeshare-dynamic``,
-    ``eu-load-dynamic``, ``eu-load-both``).
+    ``divvy-bikeshare-both``, ``eu-load-dynamic``, ``eu-load-both``).
     """
 
     def __init__(self) -> None:
@@ -274,7 +279,10 @@ class DynGWNModel(BenchmarkModel):
         self._out_steps: int | None = None
         self._output_dim: int | None = None
         self._num_nodes: int | None = None
-        self._dynamic_adj_full: torch.Tensor | None = None
+        # Cache is stored as (T_total, N*N) so per-batch slicing is one
+        # advanced-index op instead of a Python list comprehension over
+        # (T, N, N) views.
+        self._dynamic_adj_flat: torch.Tensor | None = None
         self._train_compute_sec: float = 0.0
         self._infer_compute_sec: float = 0.0
 
@@ -351,18 +359,22 @@ class DynGWNModel(BenchmarkModel):
             supports, aptinit = _build_supports(adj, cfg.adjtype, device)
 
         # -- Pre-process & cache the full dynamic adjacency ----------------
-        # Cached on CPU (often big) and indexed per-batch on GPU. For
-        # eu_load (~30 zones) this is tiny; for divvy (~200 stations)
-        # it is on the order of (T_total, N, N) ≈ a few GB float32 —
-        # still fits in host RAM and dwarfs any per-batch slice.
+        # Stored flat as (T_total, N*N) so each per-batch slice is a
+        # single advanced-index op. Lives on the training device when it
+        # fits within ``dynamic_adj_gpu_max_mb`` (eu_load is tens of MB),
+        # otherwise stays pinned on the host so CPU→GPU transfers can
+        # overlap with compute. For divvy (~200 stations × ~30k hourly
+        # snapshots ≈ 4.5 GB float32) the host path is the only option.
         if cfg.dynamic_gcn_bool:
             processed = _preprocess_flow_snapshots(
                 np.asarray(dynamic_adj_full, dtype=np.float32),
                 cfg.flow_transform,
             )
-            self._dynamic_adj_full = torch.from_numpy(processed)
+            T_total, N, _ = processed.shape
+            flat = torch.from_numpy(processed).reshape(T_total, N * N)
+            self._dynamic_adj_flat = self._stage_dynamic_cache(flat, cfg, device)
         else:
-            self._dynamic_adj_full = None
+            self._dynamic_adj_flat = None
 
         # -- DataLoaders ---------------------------------------------------
         # Window-start indices ride alongside (x, y) so each batch knows
@@ -590,9 +602,7 @@ class DynGWNModel(BenchmarkModel):
         graph_input = None
         if dynamic_gcn_bool:
             ws = batch[-1]  # window-start indices
-            graph_input = self._slice_dynamic_graph(
-                ws, in_steps, num_nodes, device
-            )
+            graph_input = self._slice_dynamic_graph(ws, in_steps, device)
 
         out = model(x_in, graph_input=graph_input)
         # Trim the trailing time dim and reshape to the contract's
@@ -605,30 +615,69 @@ class DynGWNModel(BenchmarkModel):
         )
         return out
 
+    def _stage_dynamic_cache(
+        self,
+        flat: torch.Tensor,
+        cfg: DynGWNConfig,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Decide where the (T_total, N*N) snapshot cache should live.
+
+        ``"auto"`` puts it on ``device`` when it fits within
+        ``dynamic_adj_gpu_max_mb`` (and the device is CUDA); otherwise it
+        stays on the host with pinned memory so CPU→GPU transfers can
+        be issued asynchronously. ``"cuda"`` and ``"cpu"`` force the
+        choice.
+        """
+        size_mb = flat.element_size() * flat.numel() / (1024 ** 2)
+        target = cfg.dynamic_adj_device.lower()
+        if target == "auto":
+            target = (
+                "cuda"
+                if device.type == "cuda" and size_mb <= cfg.dynamic_adj_gpu_max_mb
+                else "cpu"
+            )
+        if target == "cuda":
+            if device.type != "cuda":
+                target = "cpu"
+            else:
+                return flat.to(device)
+        # CPU path — pin so non_blocking transfers actually overlap.
+        if device.type == "cuda":
+            try:
+                return flat.pin_memory()
+            except RuntimeError:
+                # Pinning can fail under tight host-RAM budgets; fall
+                # back to a regular CPU tensor.
+                return flat
+        return flat
+
     def _slice_dynamic_graph(
         self,
         window_starts: torch.Tensor,
         in_steps: int,
-        num_nodes: int,
         device: torch.device,
     ) -> torch.Tensor:
-        """Build the per-batch ``(B, 1, N*N, T)`` dynamic-graph tensor."""
-        if self._dynamic_adj_full is None:
-            raise RuntimeError("dynamic_adj_full was not cached at fit time.")
-        full = self._dynamic_adj_full  # (T_total, N, N) on CPU
-        starts = window_starts.cpu().numpy()
-        # Gather windows.  np.stack of T_total slices is fine for
-        # batches in the dozens; faster than per-step Python indexing.
-        windows = np.stack(
-            [full[s : s + in_steps].numpy() for s in starts], axis=0
-        )  # (B, T, N, N)
-        # (B, T, N*N) -> (B, 1, N*N, T) for Dyn-GWN's conv stack.
-        B, T, N, _ = windows.shape
-        windows = windows.reshape(B, T, N * N)
-        graph_input = (
-            torch.from_numpy(windows).to(device).permute(0, 2, 1).unsqueeze(1)
-        )
-        return graph_input
+        """Build the per-batch ``(B, 1, N*N, T)`` dynamic-graph tensor.
+
+        Implementation: a single advanced-index gather on the flattened
+        ``(T_total, N*N)`` cache. When the cache is on GPU the gather
+        runs there with no transfer; otherwise we gather on the host
+        (one allocation, B*T contiguous rows) and ship the small result
+        to the device with ``non_blocking=True``.
+        """
+        flat = self._dynamic_adj_flat
+        if flat is None:
+            raise RuntimeError("dynamic_adj cache was not built at fit time.")
+        starts = window_starts.to(flat.device, non_blocking=True)
+        offsets = torch.arange(in_steps, device=flat.device)
+        # (B, T) timestep indices into the snapshot timeline.
+        idx = starts.unsqueeze(1) + offsets.unsqueeze(0)
+        windows = flat[idx]  # (B, T, N*N)
+        if windows.device != device:
+            windows = windows.to(device, non_blocking=True)
+        # Conv2d expects (B, C, H, W) = (B, 1, N*N, T).
+        return windows.permute(0, 2, 1).unsqueeze(1).contiguous()
 
     # ------------------------------------------------------------------
     # Config / compute accessors

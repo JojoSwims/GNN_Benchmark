@@ -26,10 +26,11 @@ run_example(
     search_space=dyngwn_search_space(
         lr_low=LR_LOW,
         lr_high=LR_HIGH,
-        # ~200 stations: cap dilation/skip channels to keep activation
-        # memory manageable on a single GPU. ``nhid * 8`` is the
-        # skip-channel count — at nhid=32 that's 256 skip channels x
-        # 195^2 dynamic-graph cells per timestep, which is plenty.
+        # ~200 stations: the dynamic branch carries activations of shape
+        # (B, nhid, N*N, T) ≈ B · nhid · 40k · T floats per layer, so
+        # capping ``nhid`` at 32 keeps each fit inside a single-GPU
+        # budget.  Match the default upper bound rather than letting a
+        # future widening of the default leak into this example.
         nhid=Categorical([16, 32]),
     ),
 )
