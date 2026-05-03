@@ -91,6 +91,19 @@ class STAEFormerConfig:
     # because it is a per-node positional feature, not an adjacency.
     no_graph: bool = False
 
+    # Memory-saving knobs (no architectural impact).
+    # ``use_amp`` runs the forward/loss under ``torch.autocast`` in the
+    # given dtype — bf16 halves activation memory for attention/FFN on
+    # Ampere+ GPUs without needing a GradScaler. ``use_checkpoint``
+    # enables activation checkpointing on the temporal/spatial attention
+    # stacks (recompute during backward). ``eval_batch_size`` lets the
+    # validation/inference DataLoader use a smaller batch than training
+    # so peak VRAM is not pushed higher under no_grad.
+    use_amp: bool = False
+    amp_dtype: str = "bfloat16"  # "bfloat16" | "float16"
+    use_checkpoint: bool = False
+    eval_batch_size: int | None = None
+
     # Runtime
     seed: int | None = None
     device: str = "auto"  # "auto" | "cuda" | "cpu"
@@ -219,6 +232,7 @@ class STAEFormerModel(BenchmarkModel):
         # one batch at a time is resident. Normalisation and NaN-handling
         # are applied per-batch below.
         pin = device.type == "cuda"
+        eval_bs = cfg.eval_batch_size or cfg.batch_size
         train_loader = DataLoader(
             TensorDataset(x_train, y_train),
             batch_size=cfg.batch_size,
@@ -227,7 +241,7 @@ class STAEFormerModel(BenchmarkModel):
         )
         val_loader = DataLoader(
             TensorDataset(x_val, y_val),
-            batch_size=cfg.batch_size,
+            batch_size=eval_bs,
             shuffle=False,
             pin_memory=pin,
         )
@@ -255,7 +269,16 @@ class STAEFormerModel(BenchmarkModel):
             dropout=cfg.dropout,
             use_mixed_proj=True,
             use_spatial_attn=not cfg.no_graph,
+            use_checkpoint=cfg.use_checkpoint,
         ).to(device)
+
+        # Mixed-precision context. bf16 needs no GradScaler (its dynamic
+        # range matches fp32); fp16 would, so we restrict AMP to CUDA and
+        # bf16 for now — this is a memory pass, not a numerics pass.
+        amp_enabled = bool(cfg.use_amp) and device.type == "cuda"
+        amp_dtype = (
+            torch.bfloat16 if cfg.amp_dtype == "bfloat16" else torch.float16
+        )
 
         # -- Training setup ------------------------------------------------
         criterion = masked_huber_loss
@@ -291,11 +314,16 @@ class STAEFormerModel(BenchmarkModel):
                     x_batch, y_batch, scaler, device,
                 )
                 with train_sw:
-                    out = model(x_batch)
-                    out = y_scaler.inverse_transform(out)
-                    loss = criterion(out, y_batch)
+                    optimizer.zero_grad(set_to_none=True)
+                    with torch.autocast(
+                        device_type=device.type,
+                        dtype=amp_dtype,
+                        enabled=amp_enabled,
+                    ):
+                        out = model(x_batch)
+                        out = y_scaler.inverse_transform(out)
+                        loss = criterion(out, y_batch)
 
-                    optimizer.zero_grad()
                     loss.backward()
                     if cfg.clip_grad:
                         nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_grad)
@@ -317,9 +345,14 @@ class STAEFormerModel(BenchmarkModel):
                         x_batch, y_batch, scaler, device,
                     )
                     with train_sw:
-                        out = model(x_batch)
-                        out = y_scaler.inverse_transform(out)
-                        loss = criterion(out, y_batch)
+                        with torch.autocast(
+                            device_type=device.type,
+                            dtype=amp_dtype,
+                            enabled=amp_enabled,
+                        ):
+                            out = model(x_batch)
+                            out = y_scaler.inverse_transform(out)
+                            loss = criterion(out, y_batch)
                         batch_loss = loss.item()
                     batch_losses_val.append(batch_loss)
             val_loss = float(np.mean(batch_losses_val))
@@ -329,11 +362,18 @@ class STAEFormerModel(BenchmarkModel):
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 # Keep the best snapshot on CPU so it does not compete for
-                # VRAM with the live model + optimizer state.
+                # VRAM with the live model + optimizer state. Drop the old
+                # snapshot first so we don't briefly hold two copies on
+                # host while a third (the live state_dict view) is on GPU,
+                # then empty the CUDA cache to release the transient
+                # staging buffers used by the device->host copies.
+                best_state = None
                 best_state = {
-                    k: v.detach().cpu().clone()
+                    k: v.detach().to("cpu", copy=True)
                     for k, v in model.state_dict().items()
                 }
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
                 wait = 0
             else:
                 wait += 1
@@ -366,11 +406,17 @@ class STAEFormerModel(BenchmarkModel):
         model = self._model
 
         pin = device.type == "cuda"
+        eval_bs = cfg.eval_batch_size or cfg.batch_size
         loader = DataLoader(
             TensorDataset(x_test),
-            batch_size=cfg.batch_size,
+            batch_size=eval_bs,
             shuffle=False,
             pin_memory=pin,
+        )
+
+        amp_enabled = bool(cfg.use_amp) and device.type == "cuda"
+        amp_dtype = (
+            torch.bfloat16 if cfg.amp_dtype == "bfloat16" else torch.float16
         )
 
         infer_sw = Stopwatch()
@@ -381,9 +427,16 @@ class STAEFormerModel(BenchmarkModel):
                 x_batch = x_batch.to(device, non_blocking=pin)
                 x_batch = torch.nan_to_num(scaler.transform(x_batch))
                 with infer_sw:
-                    out = model(x_batch)
-                    out = y_scaler.inverse_transform(out)
-                    out_cpu = out.cpu().numpy()
+                    with torch.autocast(
+                        device_type=device.type,
+                        dtype=amp_dtype,
+                        enabled=amp_enabled,
+                    ):
+                        out = model(x_batch)
+                        out = y_scaler.inverse_transform(out)
+                    # Cast back to fp32 before leaving GPU so downstream
+                    # numpy consumers see the same dtype as before AMP.
+                    out_cpu = out.float().cpu().numpy()
                 preds.append(out_cpu)
 
         self._infer_compute_sec = infer_sw.elapsed

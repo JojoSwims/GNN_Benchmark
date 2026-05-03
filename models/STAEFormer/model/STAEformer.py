@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 
 class AttentionLayer(nn.Module):
@@ -35,38 +37,31 @@ class AttentionLayer(nn.Module):
     def forward(self, query, key, value):
         # Q    (batch_size, ..., tgt_length, model_dim)
         # K, V (batch_size, ..., src_length, model_dim)
-        batch_size = query.shape[0]
-        tgt_length = query.shape[-2]
-        src_length = key.shape[-2]
-
         query = self.FC_Q(query)
         key = self.FC_K(key)
         value = self.FC_V(value)
 
-        # Qhead, Khead, Vhead (num_heads * batch_size, ..., length, head_dim)
-        query = torch.cat(torch.split(query, self.head_dim, dim=-1), dim=0)
-        key = torch.cat(torch.split(key, self.head_dim, dim=-1), dim=0)
-        value = torch.cat(torch.split(value, self.head_dim, dim=-1), dim=0)
+        # Reshape to (..., num_heads, length, head_dim) so PyTorch's fused
+        # SDPA kernel (flash / memory-efficient) can avoid materializing the
+        # full (length, length) score matrix. Same math as the original
+        # head-split + (Q @ K^T)/sqrt(d) + softmax + (... @ V); the kernel
+        # change is what unlocks N=O(10^3) spatial attention without OOM.
+        leading_shape = query.shape[:-1]
+        src_leading_shape = key.shape[:-1]
+        q = query.reshape(*leading_shape, self.num_heads, self.head_dim)
+        k = key.reshape(*src_leading_shape, self.num_heads, self.head_dim)
+        v = value.reshape(*src_leading_shape, self.num_heads, self.head_dim)
 
-        key = key.transpose(
-            -1, -2
-        )  # (num_heads * batch_size, ..., head_dim, src_length)
+        # Move heads in front of length: (..., num_heads, length, head_dim).
+        q = q.transpose(-2, -3)
+        k = k.transpose(-2, -3)
+        v = v.transpose(-2, -3)
 
-        attn_score = (
-            query @ key
-        ) / self.head_dim**0.5  # (num_heads * batch_size, ..., tgt_length, src_length)
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=self.mask)
 
-        if self.mask:
-            mask = torch.ones(
-                tgt_length, src_length, dtype=torch.bool, device=query.device
-            ).tril()  # lower triangular part of the matrix
-            attn_score.masked_fill_(~mask, -torch.inf)  # fill in-place
-
-        attn_score = torch.softmax(attn_score, dim=-1)
-        out = attn_score @ value  # (num_heads * batch_size, ..., tgt_length, head_dim)
-        out = torch.cat(
-            torch.split(out, batch_size, dim=0), dim=-1
-        )  # (batch_size, ..., tgt_length, head_dim * num_heads = model_dim)
+        # Restore (..., length, num_heads, head_dim) -> (..., length, model_dim).
+        out = out.transpose(-2, -3).contiguous()
+        out = out.reshape(*leading_shape, self.model_dim)
 
         out = self.out_proj(out)
 
@@ -127,8 +122,10 @@ class STAEformer(nn.Module):
         dropout=0.1,
         use_mixed_proj=True,
         use_spatial_attn=True,
+        use_checkpoint=False,
     ):
         super().__init__()
+        self.use_checkpoint = use_checkpoint
 
         self.num_nodes = num_nodes
         self.in_steps = in_steps
@@ -231,10 +228,19 @@ class STAEformer(nn.Module):
             features.append(adp_emb)
         x = torch.cat(features, dim=-1)  # (batch_size, in_steps, num_nodes, model_dim)
 
-        for attn in self.attn_layers_t:
-            x = attn(x, dim=1)
-        for attn in self.attn_layers_s:
-            x = attn(x, dim=2)
+        # Activation checkpointing trades a small recompute cost for a large
+        # drop in stored activations from the attention stacks — the spatial
+        # stack in particular stores (B, T, N, model_dim) at every layer.
+        if self.use_checkpoint and self.training and x.requires_grad:
+            for attn in self.attn_layers_t:
+                x = checkpoint(attn, x, 1, use_reentrant=False)
+            for attn in self.attn_layers_s:
+                x = checkpoint(attn, x, 2, use_reentrant=False)
+        else:
+            for attn in self.attn_layers_t:
+                x = attn(x, dim=1)
+            for attn in self.attn_layers_s:
+                x = attn(x, dim=2)
         # (batch_size, in_steps, num_nodes, model_dim)
 
         if self.use_mixed_proj:
