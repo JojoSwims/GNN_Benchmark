@@ -17,7 +17,7 @@ from gnn_benchmark.models import MLPMultivariateConfig, MLPMultivariateModel
 
 from _shared import WORKSPACE, apply_schedule
 
-DATASET = "lamah-ce-dynamic"
+DATASET = "lamah-ce"
 # Chosen as a robust single-run setting from prior MLP tuning trends.
 base_config = apply_schedule(
     MLPMultivariateConfig(

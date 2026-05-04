@@ -74,13 +74,10 @@ from gnn_benchmark.datasets import (
     DivvyBikeshareLoader,
     ElergoneLoader,
     EULoadLoader,
-    GDELTProtestLoader,
-    LamaHCEDynamicLoader,
+    LamaHCELoader,
     MetroLALoader,
-    MelPedsLoader,
     NOAABuoyLoader,
     NYCovidLoader,
-    NYISOLoader,
     PEMS04Loader,
     PEMS08Loader,
     PEMSBayLoader,
@@ -115,12 +112,9 @@ DATASET_REGISTRY: dict[str, Any] = {
     # hour, dropping self-loops and zero-flow rows.
     "eu-load-dynamic":      lambda: EULoadLoader(edges_mode="dynamic"),
     "eu-load-both":         lambda: EULoadLoader(edges_mode="both"),
-    "nyiso":                NYISOLoader,
     "nyc-covid":            NYCovidLoader,
-    "mel-peds":             MelPedsLoader,
-    "lamah-ce-dynamic":     LamaHCEDynamicLoader,
+    "lamah-ce":     LamaHCELoader,
     "noaa-buoy":            NOAABuoyLoader,
-    "gdelt-protest":        GDELTProtestLoader,
     # Divvy Chicago bikeshare, 2024-03..2026-03 combined parquet
     # (after cross-era station-ID reconciliation). Restricted to the
     # Loop + Near North Side + Lincoln Park bbox, sparsified static

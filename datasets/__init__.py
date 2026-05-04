@@ -35,13 +35,7 @@ Classes:
         selectable via ``edges_mode``.
         Requires `gdown` package for Google Drive download.
 
-    NYISOLoader: NYISO Integrated Load dataset (11 regions, hourly).
-        No graph structure provided.
-
     NYCovidLoader: NYT COVID-19 county-level dataset (2000+ counties, daily).
-        Haversine distance graph.
-
-    MelPedsLoader: Melbourne Pedestrian Counts dataset (55 sensors, hourly).
         Haversine distance graph.
 
     LamaHCELoader: LamaH-CE Central Europe streamflow dataset (up to 859 gauges).
@@ -54,12 +48,6 @@ Classes:
     NOAABuoyLoader: NOAA NDBC ocean buoy network, North Atlantic & Gulf of
         Mexico, 2020-2023 (hourly). 4 features: WTMP, WSPD, WVHT, PRES.
         Haversine distance graph.
-
-    GDELTProtestLoader: GDELT 2.0 daily per-country geopolitical aggregates
-        over the top-K most active countries. 10 features (protest count,
-        verbal/material conflict, Goldstein scale, tone, etc.). Edges from
-        UNGA voting similarity (Voeten Dataverse) or geographic centroid
-        proximity over the same node set.
 
     DivvyBikeshareLoader: Divvy Chicago bikeshare, March 2021 (677 stations,
         hourly). Node features: departures, arrivals. Static
@@ -82,15 +70,11 @@ from gnn_benchmark.datasets.beijing_air import (
 )
 from gnn_benchmark.datasets.elergone import ElergoneLoader
 from gnn_benchmark.datasets.eu_load import EULoadLoader
-from gnn_benchmark.datasets.iso import NYISOLoader
-from gnn_benchmark.datasets.melpeds import MelPedsLoader
 from gnn_benchmark.datasets.ny_covid import NYCovidLoader
 from gnn_benchmark.datasets.pems_speed import PEMSBayLoader, MetroLALoader
-from gnn_benchmark.datasets.lamah_ce import LamaHCELoader
-from gnn_benchmark.datasets.lamah_ce_dynamic import LamaHCEDynamicLoader
+from gnn_benchmark.datasets.lamah_ce import LamaHCELoader, LamaHCEDynamicLoader
 from gnn_benchmark.datasets.pems_volume import PEMS04Loader, PEMS08Loader
 from gnn_benchmark.datasets.noaa_buoy import NOAABuoyLoader
-from gnn_benchmark.datasets.gdelt_protests import GDELTProtestLoader
 from gnn_benchmark.datasets.divvy_bikeshare import DivvyBikeshareLoader
 
 
@@ -101,9 +85,7 @@ __all__ = [
     "Cluster2AirLoader",
     "ElergoneLoader",
     "EULoadLoader",
-    "NYISOLoader",
     "NYCovidLoader",
-    "MelPedsLoader",
     "PEMSBayLoader",
     "MetroLALoader",
     "PEMS04Loader",
@@ -111,6 +93,5 @@ __all__ = [
     "NOAABuoyLoader",
     "LamaHCELoader",
     "LamaHCEDynamicLoader",
-    "GDELTProtestLoader",
     "DivvyBikeshareLoader",
 ]

@@ -20,7 +20,7 @@ from gnn_benchmark.models import MTGODEConfig, MTGODEModel
 
 from _shared import WORKSPACE
 
-DATASET = "lamah-ce-dynamic"
+DATASET = "lamah-ce"
 
 # Winning MTGODE config on lamah-ce-dynamic (random search, seed=0), with
 # the learned graph constructor switched off so ``predefined_A`` is used.

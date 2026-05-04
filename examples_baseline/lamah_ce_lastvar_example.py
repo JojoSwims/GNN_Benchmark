@@ -17,7 +17,7 @@ from gnn_benchmark.models import LastValueModel
 
 from _shared import WORKSPACE
 
-DATASET = "lamah-ce-dynamic"
+DATASET = "lamah-ce"
 
 print(f"[example] LastVar (LastValue) on {DATASET} — single run (no tuning)")
 runner = BenchmarkRunner(workspace_dir=WORKSPACE, datasets=[DATASET])

@@ -12,7 +12,7 @@ from gnn_benchmark.tuning import Categorical, gwn_search_space
 
 from _shared import LR_HIGH, LR_LOW, apply_schedule, run_example
 
-DATASET = "lamah-ce-dynamic"
+DATASET = "lamah-ce"
 base_config = apply_schedule(GWNConfig(), DATASET)
 
 run_example(

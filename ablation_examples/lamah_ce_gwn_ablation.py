@@ -15,7 +15,7 @@ from gnn_benchmark.models import GWNConfig, GWNModel
 
 from _shared import run_ablation
 
-DATASET = "lamah-ce-dynamic"
+DATASET = "lamah-ce"
 
 # Winning GWN config on lamah-ce-dynamic (random search, seed=0).
 config = GWNConfig(
