@@ -91,7 +91,7 @@ DATASET_SCHEDULE: dict[str, dict[str, Any]] = {
         batch_size=32, max_epochs=20, early_stop=7,
         lr_milestones=[10, 15], lr_decay_ratio=0.5,
     ),
-    "lamah-ce-dynamic": dict(
+    "lamah-ce": dict(
         batch_size=16, max_epochs=20, early_stop=7,
         lr_milestones=[10, 15], lr_decay_ratio=0.5,
     ),

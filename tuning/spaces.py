@@ -49,8 +49,6 @@ __all__ = [
     "gwn_search_space",
     "mlp_multivariate_search_space",
     "mtgnn_search_space",
-    "gts_search_space",
-    "d2stgnn_search_space",
     "astgcn_search_space",
     "staeformer_search_space",
     "mtgode_search_space",
@@ -59,7 +57,6 @@ __all__ = [
 
 # Common LR range, log-uniform.  Spans roughly the published defaults
 # across the wrapped models (1e-3 for GWN/MTGNN/STAEFormer/ASTGCN/MTGODE,
-# 2e-3 for D2STGNN, 5e-3 for GTS), with ~one decade of headroom on each
 # side.  Override per call via ``lr_low``/``lr_high``.
 DEFAULT_LR_LOW = 1e-4
 DEFAULT_LR_HIGH = 5e-3
@@ -173,51 +170,6 @@ def mtgnn_search_space(
     )
 
 
-def gts_search_space(
-    lr_low: float = DEFAULT_LR_LOW,
-    lr_high: float = DEFAULT_LR_HIGH,
-    **overrides: Sampler,
-) -> dict[str, Sampler]:
-    """GTS: lr + weight_decay + rnn_units + max_diffusion_step + temperature.
-
-    GTS doesn't expose dropout, so weight_decay is the regularization
-    axis.  ``max_diffusion_step`` sets the diffusion-conv expressiveness
-    (paper default 3) and ``temperature`` controls how hard/soft the
-    learned latent graph is — both materially shift convergence.
-    """
-    return _build(
-        {
-            "lr":                 LogUniform(lr_low, lr_high),
-            "weight_decay":       Categorical([0.0, 1e-5, 1e-4, 1e-3]),
-            "rnn_units":          Categorical([32, 64, 96]),
-            "max_diffusion_step": Categorical([2, 3]),
-            "temperature":        Categorical([0.1, 0.5, 1.0]),
-        },
-        overrides,
-    )
-
-
-def d2stgnn_search_space(
-    lr_low: float = DEFAULT_LR_LOW,
-    lr_high: float = DEFAULT_LR_HIGH,
-    **overrides: Sampler,
-) -> dict[str, Sampler]:
-    """D2STGNN: lr + dropout + num_hidden + k_s + k_t.
-
-    ``k_s`` is the spatial-diffusion order (the same kind of knob as
-    ASTGCN's ``K`` — small integer changes have outsized effects).
-    ``k_t`` is the temporal kernel size.
-    """
-    return _build(
-        {
-            "lr":         LogUniform(lr_low, lr_high),
-            "dropout":    Categorical([0.0, 0.1, 0.2, 0.3]),
-            "num_hidden": Categorical([16, 32, 64]),
-            "k_s":        Categorical([1, 2, 3]),
-            "k_t":        Categorical([2, 3, 4]),
-        },
-        overrides,
-    )
 
 
 def astgcn_search_space(

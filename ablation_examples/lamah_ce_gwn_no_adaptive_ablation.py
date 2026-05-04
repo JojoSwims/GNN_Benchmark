@@ -20,7 +20,7 @@ from gnn_benchmark.models import GWNConfig, GWNModel
 
 from _shared import WORKSPACE
 
-DATASET = "lamah-ce-dynamic"
+DATASET = "lamah-ce"
 
 # Winning GWN config on lamah-ce-dynamic (random search, seed=0), with
 # the adaptive adjacency switched off.  ``no_graph`` is left at its

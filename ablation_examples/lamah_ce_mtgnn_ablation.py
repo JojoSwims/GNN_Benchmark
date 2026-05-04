@@ -15,7 +15,7 @@ from gnn_benchmark.models import MTGNNConfig, MTGNNModel
 
 from _shared import run_ablation
 
-DATASET = "lamah-ce-dynamic"
+DATASET = "lamah-ce"
 
 # Winning MTGNN config on lamah-ce-dynamic (random search, seed=0).
 config = MTGNNConfig(

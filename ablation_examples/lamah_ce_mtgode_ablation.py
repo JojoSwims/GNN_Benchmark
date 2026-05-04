@@ -15,7 +15,7 @@ from gnn_benchmark.models import MTGODEConfig, MTGODEModel
 
 from _shared import run_ablation
 
-DATASET = "lamah-ce-dynamic"
+DATASET = "lamah-ce"
 
 # Winning MTGODE config on lamah-ce-dynamic (random search, seed=0).
 config = MTGODEConfig(
