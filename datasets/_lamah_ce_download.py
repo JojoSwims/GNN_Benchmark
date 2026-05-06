@@ -24,7 +24,7 @@ except ImportError:
 # Pre-mirrored LamaH-CE archive on Google Drive. Same daily layout as the
 # Zenodo release (record 4525244) but hosted where we get a reliable fetch
 # instead of intermittent 404s.
-_LAMAH_GDRIVE_ID = "1-gMtrag7EtAqhuMB2sJfc85whd8iRLEt"
+_LAMAH_GDRIVE_ID = "1JEpgwAspF2RQyjCAKY8Ave15KMh3q4aJ"
 _LAMAH_TARBALL_NAME = "lamah_ce.tar.gz"
 
 
