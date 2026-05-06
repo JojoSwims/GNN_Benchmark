@@ -39,11 +39,10 @@ Classes:
         Haversine distance graph.
 
     LamaHCELoader: LamaH-CE Central Europe streamflow dataset (up to 859 gauges).
-        Requires local copy of Zenodo data. River network topology edges.
-        Includes dynamic met + static catchment features (C=30).
+        Downloads the Google Drive mirror with gdown when data_root is omitted.
+        River network topology edges and qobs + 8 ERA5-Land forcings (C=9).
 
-    LamaHCEDynamicLoader: LamaH-CE dynamic-only variant (up to 859 gauges).
-        Same river network, but only qobs + 8 ERA5-Land met forcings (C=9).
+    LamaHCEDynamicLoader: Deprecated alias for LamaHCELoader.
 
     NOAABuoyLoader: NOAA NDBC ocean buoy network, North Atlantic & Gulf of
         Mexico, 2020-2023 (hourly). 4 features: WTMP, WSPD, WVHT, PRES.
