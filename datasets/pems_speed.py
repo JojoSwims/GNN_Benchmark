@@ -87,8 +87,8 @@ PEMS_BAY_NODE_ORDER = [
 ]
 
 # Google Drive IDs for data files
-PEMS_BAY_GDRIVE_ID = "1wD-mHlqAb2mtHOe_68fZvDh1LpDegMMq"
-METRLA_GDRIVE_ID = "1pAGRfzMx6K9WWsfDcD1NMbIif0T0saFC"
+PEMS_BAY_GDRIVE_ID = "1qhPgBUP_lFdRsrUtzJ1oZx_Dejpy5D0f"
+METRLA_GDRIVE_ID = "1GNQYGgPNIyZ7sEcEDs6ObW6GSqaOw10C"
 
 # URLs for adjacency matrices
 PEMS_BAY_ADJ_URL = "https://raw.githubusercontent.com/chnsh/DCRNN/master/data/sensor_graph/adj_mx_bay.pkl"

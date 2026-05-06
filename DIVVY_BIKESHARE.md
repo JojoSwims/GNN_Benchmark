@@ -12,7 +12,7 @@ were needed to support time-varying edges.
   `https://divvy-tripdata.s3.amazonaws.com/`.
 - **Combined artifact:** a single parquet bundling many months, produced
   offline by `scripts/combine_divvy_tripdata.py` and uploaded once to
-  Google Drive. ID = `185BbpyzAS5YvKGfKtNCv3tlhPYKqNbX5`. Current
+  Google Drive. ID = `1r2rfVNDgjcJiJO3lGOCK81AF7cDjHAKZ`. Current
   coverage: 2024-03 through 2026-03 (25 months, ~11.7 M trips,
   ~402 MB).
 - **Download path** (when `data_path=None`): resolved in this order by

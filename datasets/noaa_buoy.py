@@ -42,8 +42,8 @@ except ImportError:
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 # Google Drive file IDs for the pre-fetched NOAA buoy data.
-_STATIONS_GDRIVE_ID = "1m1y-2zsTwdPjK8tV2BqluzM2aNf4DJLf"
-_DATA_GDRIVE_ID = "1KKmQ7v18kQ1mMNuBG00c4wBOXDmYraDp"
+_STATIONS_GDRIVE_ID = "1brU5qePbtB1fSyAKlGK2LF4nwIqago61"
+_DATA_GDRIVE_ID = "1ER228VCA8Yi92UD5gLQGKYpFlHdkYr5T"
 
 _YEARS = (2022, 2023, 2024, 2025)
 
