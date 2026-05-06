@@ -20,10 +20,10 @@ except ImportError:
 
 
 # Google Drive IDs for the source files.
-EDGES_GDRIVE_ID = "12QPWAwGr-36cLQ3TB-KbGE34om3TODH1"
-LOAD_GDRIVE_ID = "1mLjtYlbu4cTIAJKDjlD2dS-Zdq-n0ED0"
+EDGES_GDRIVE_ID = "1Fxz9GWMGnOVXnrAr7A_e7xb2zMoYQxQW"
+LOAD_GDRIVE_ID = "1GKd6PCu-Y_Q771IgBsAELp5e8LHwKGR_"
 # Hourly directed cross-zone flow snapshots.
-DYNAMIC_EDGES_GDRIVE_ID = "1OFaI90bkcTBS_VAk03umCoJbS9nHVg7W"
+DYNAMIC_EDGES_GDRIVE_ID = "1K-ZR6UToCdIMhYUEIQ-a15h4Ebe8mwZE"
 
 FREQ = "1h"
 

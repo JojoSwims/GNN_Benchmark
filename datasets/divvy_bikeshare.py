@@ -20,7 +20,7 @@ except ImportError:
 
 # Google Drive ID for the combined parquet covering 2024-03..2026-03.
 # Produced by scripts/combine_divvy_tripdata.py and uploaded once.
-GDRIVE_ID = "185BbpyzAS5YvKGfKtNCv3tlhPYKqNbX5"
+GDRIVE_ID = "1r2rfVNDgjcJiJO3lGOCK81AF7cDjHAKZ"
 
 # Cache directory for the downloaded parquet. First run downloads to
 # ``_CACHE_PATH``; subsequent runs reuse the cached file. Users can still
