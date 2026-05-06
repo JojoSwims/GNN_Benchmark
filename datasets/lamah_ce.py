@@ -21,20 +21,99 @@ Reference:
     for Central Europe. Earth Syst. Sci. Data, 13, 4529–4565.
     https://doi.org/10.5194/essd-13-4529-2021
 
-Dataset:
-    https://doi.org/10.5281/zenodo.4525244
+Dataset mirror:
+    https://drive.google.com/uc?id=1JEpgwAspF2RQyjCAKY8Ave15KMh3q4aJ
 """
 
 from dataclasses import dataclass
+from importlib import import_module, util
+import tarfile
 from pathlib import Path
 
 import pandas as pd
 
 from gnn_benchmark.core.types import DatasetInfo, WindowConfig
 from gnn_benchmark.datasets.base import DatasetLoader
-from gnn_benchmark.datasets._lamah_ce_download import ensure_lamah_data_root
 
-ZENODO_URL = "https://doi.org/10.5281/zenodo.4525244"
+# Pre-mirrored LamaH-CE archive on Google Drive. Same daily layout as the
+# public LamaH-CE release, but hosted where we get a reliable gdown fetch.
+_LAMAH_GDRIVE_ID = "1JEpgwAspF2RQyjCAKY8Ave15KMh3q4aJ"
+_LAMAH_TARBALL_NAME = "lamah_ce.tar.gz"
+_LAMAH_URL = f"https://drive.google.com/uc?id={_LAMAH_GDRIVE_ID}"
+
+
+def default_cache_dir() -> Path:
+    """Persistent cache shared across workspaces."""
+    return Path.home() / ".cache" / "gnn_benchmark" / "lamah_ce"
+
+
+def ensure_lamah_data_root(
+    resolution: str,
+    cache_dir: Path | None = None,
+) -> Path:
+    """Return a local LamaH-CE data root, downloading and extracting if needed.
+
+    Args:
+        resolution: "daily" or "hourly". Only used to validate caller intent;
+            the extracted archive is searched for the expected LamaH-CE root.
+        cache_dir: Override the default cache location.
+
+    Returns:
+        Path to the extracted LamaH-CE root (the folder containing
+        ``D_gauges/`` and ``B_basins_intermediate_all/``).
+    """
+    if resolution not in {"daily", "hourly"}:
+        raise ValueError(
+            f"resolution must be 'daily' or 'hourly', got {resolution!r}"
+        )
+
+    cache_root = Path(cache_dir) if cache_dir else default_cache_dir()
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    tarball_path = cache_root / _LAMAH_TARBALL_NAME
+    extract_dir = cache_root / "extracted"
+    marker = extract_dir / ".extracted_ok"
+
+    if marker.exists():
+        return _find_data_root(extract_dir)
+
+    if not tarball_path.exists():
+        _download_lamah_tarball(tarball_path)
+
+    print(f"[LamaH-CE] Extracting {tarball_path.name} -> {extract_dir}")
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(tarball_path) as tf:
+        tf.extractall(extract_dir)
+    marker.touch()
+    return _find_data_root(extract_dir)
+
+
+def _download_lamah_tarball(tarball_path: Path) -> None:
+    """Download the LamaH-CE archive from Google Drive with gdown."""
+    if util.find_spec("gdown") is None:
+        raise ImportError(
+            "gdown is required to fetch the LamaH-CE dataset. "
+            "Install with: pip install gdown"
+        )
+
+    gdown = import_module("gdown")
+    print(f"[LamaH-CE] Downloading archive from Google Drive -> {tarball_path}")
+    print("[LamaH-CE] This is a large file; first-run fetch takes a while.")
+    tmp = tarball_path.with_suffix(tarball_path.suffix + ".part")
+    gdown.download(id=_LAMAH_GDRIVE_ID, output=str(tmp), quiet=False)
+    tmp.rename(tarball_path)
+
+
+def _find_data_root(path: Path) -> Path:
+    """Locate the LamaH-CE root inside an extracted directory."""
+    for p in path.rglob("D_gauges"):
+        if p.is_dir():
+            return p.parent
+    raise FileNotFoundError(
+        f"Could not find D_gauges/ under {path}. "
+        "The archive layout may have changed; delete the cache and retry."
+    )
+
 
 # Sentinel value used in LamaH-CE for missing data
 _MISSING = -999.0
@@ -73,8 +152,9 @@ class LamaHCELoader(DatasetLoader):
 
     Args:
         data_root: Path to the extracted LamaH-CE root directory. If None
-            (the default), the Zenodo tarball is fetched and extracted
-            automatically into ``~/.cache/gnn_benchmark/lamah_ce/``.
+            (the default), the Google Drive mirror is fetched with ``gdown``
+            and extracted automatically into
+            ``~/.cache/gnn_benchmark/lamah_ce/``.
         resolution: "daily" or "hourly".
         max_gap_fraction: Exclude gauges where the fraction of remaining gaps
             exceeds this threshold. Default 0.05 (5 %).
@@ -100,7 +180,7 @@ class LamaHCELoader(DatasetLoader):
         units = {"qobs": "m3/s", **_MET_UNITS}
         return DatasetInfo(
             name=f"lamah_ce_{self.resolution}",
-            url=ZENODO_URL,
+            url=_LAMAH_URL,
             frequency=freq,
             node_order=self._node_order,
             feature_columns=feature_cols,
@@ -157,7 +237,7 @@ class LamaHCELoader(DatasetLoader):
         if not self.data_root.exists():
             raise FileNotFoundError(
                 f"data_root not found: {self.data_root}\n"
-                "Either pass data_root=None to auto-download from Zenodo, "
+                "Either pass data_root=None to auto-download with gdown, "
                 "or extract the archive to the expected path."
             )
         gauge_dir = self.data_root / "D_gauges"

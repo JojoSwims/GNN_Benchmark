@@ -3,12 +3,12 @@
 Test script for LamaHCELoader.
 
 Usage:
+    python test_lamah.py
     python test_lamah.py --data-root /path/to/extracted/LamaH-CE
 
 The data_root should be the folder that contains D_gauges/, A_basins_total_upstrm/, etc.
-Download from: https://doi.org/10.5281/zenodo.4525244
-    - 2_LamaH-CE_daily.tar.gz  (~1.5 GB, daily only — fastest to test with)
-    - 1_LamaH-CE_daily_hourly.tar.gz  (~15 GB, both resolutions)
+When --data-root is omitted in normal loader usage, LamaHCELoader downloads the
+Google Drive mirror with gdown and caches it under ~/.cache/gnn_benchmark/lamah_ce/.
 """
 
 import argparse
@@ -28,7 +28,7 @@ from gnn_benchmark.core.workspace import DataWorkspace
 from gnn_benchmark.datasets.lamah_ce import LamaHCELoader
 
 
-def main(data_root: Path, resolution: str, max_gap_fraction: float) -> None:
+def main(data_root: Path | None, resolution: str, max_gap_fraction: float) -> None:
     print("=" * 60)
     print("LamaH-CE Dataset Test")
     print("=" * 60)
@@ -117,8 +117,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--data-root",
         type=Path,
-        required=True,
-        help="Path to extracted LamaH-CE root directory (contains D_gauges/, etc.)",
+        default=None,
+        help=(
+            "Path to extracted LamaH-CE root directory (contains D_gauges/, "
+            "etc.). Omit to download the Google Drive mirror with gdown."
+        ),
     )
     parser.add_argument(
         "--resolution",
