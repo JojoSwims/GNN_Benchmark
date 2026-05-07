@@ -7,7 +7,7 @@ dataset-specific tweaks live in the example files themselves.
 
 Why
 ---
-Earlier examples (now under ``examples_old/``) had a few fairness problems:
+Earlier examples (now under ``examples_baseline/``) had a few fairness problems:
 
   * **Inconsistent trial counts.**  Most examples ran 18 trials, but several
     models on the larger datasets (LamaH-CE, NYC COVID) ran 8.  The hardest

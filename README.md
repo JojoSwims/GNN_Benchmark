@@ -190,8 +190,9 @@ This order helps isolate setup issues (environment → data → model).
 ## Repository pointers
 
 - `README.md` — high-level usage and onboarding (this file)
-- `examples_old/` — simple starter usage
+- `examples_baseline/` — simple starter usage
 - `examples_new/` — model × dataset tuning/comparison examples
+- `ablation_examples/` — graph/adaptive-edge ablation runs
 
 ---
 
