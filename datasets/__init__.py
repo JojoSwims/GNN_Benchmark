@@ -42,8 +42,6 @@ Classes:
         Downloads the Google Drive mirror with gdown when data_root is omitted.
         River network topology edges and qobs + 8 ERA5-Land forcings (C=9).
 
-    LamaHCEDynamicLoader: Deprecated alias for LamaHCELoader.
-
     NOAABuoyLoader: NOAA NDBC ocean buoy network, North Atlantic & Gulf of
         Mexico, 2020-2023 (hourly). 4 features: WTMP, WSPD, WVHT, PRES.
         Haversine distance graph.
@@ -71,7 +69,7 @@ from gnn_benchmark.datasets.elergone import ElergoneLoader
 from gnn_benchmark.datasets.eu_load import EULoadLoader
 from gnn_benchmark.datasets.ny_covid import NYCovidLoader
 from gnn_benchmark.datasets.pems_speed import PEMSBayLoader, MetroLALoader
-from gnn_benchmark.datasets.lamah_ce import LamaHCELoader, LamaHCEDynamicLoader
+from gnn_benchmark.datasets.lamah_ce import LamaHCELoader
 from gnn_benchmark.datasets.pems_volume import PEMS04Loader, PEMS08Loader
 from gnn_benchmark.datasets.noaa_buoy import NOAABuoyLoader
 from gnn_benchmark.datasets.divvy_bikeshare import DivvyBikeshareLoader
@@ -91,6 +89,5 @@ __all__ = [
     "PEMS08Loader",
     "NOAABuoyLoader",
     "LamaHCELoader",
-    "LamaHCEDynamicLoader",
     "DivvyBikeshareLoader",
 ]

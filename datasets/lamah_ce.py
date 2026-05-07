@@ -47,26 +47,16 @@ def default_cache_dir() -> Path:
     return Path.home() / ".cache" / "gnn_benchmark" / "lamah_ce"
 
 
-def ensure_lamah_data_root(
-    resolution: str,
-    cache_dir: Path | None = None,
-) -> Path:
+def ensure_lamah_data_root(cache_dir: Path | None = None) -> Path:
     """Return a local LamaH-CE data root, downloading and extracting if needed.
 
     Args:
-        resolution: "daily" or "hourly". Only used to validate caller intent;
-            the extracted archive is searched for the expected LamaH-CE root.
         cache_dir: Override the default cache location.
 
     Returns:
         Path to the extracted LamaH-CE root (the folder containing
         ``D_gauges/`` and ``B_basins_intermediate_all/``).
     """
-    if resolution not in {"daily", "hourly"}:
-        raise ValueError(
-            f"resolution must be 'daily' or 'hourly', got {resolution!r}"
-        )
-
     cache_root = Path(cache_dir) if cache_dir else default_cache_dir()
     cache_root.mkdir(parents=True, exist_ok=True)
 
@@ -155,14 +145,12 @@ class LamaHCELoader(DatasetLoader):
             (the default), the Google Drive mirror is fetched with ``gdown``
             and extracted automatically into
             ``~/.cache/gnn_benchmark/lamah_ce/``.
-        resolution: "daily" or "hourly".
         max_gap_fraction: Exclude gauges where the fraction of remaining gaps
             exceeds this threshold. Default 0.05 (5 %).
         cache_dir: Override the auto-download cache location.
     """
 
     data_root: Path | None = None
-    resolution: str = "daily"
     max_gap_fraction: float = 0.05
     cache_dir: Path | None = None
 
@@ -175,20 +163,19 @@ class LamaHCELoader(DatasetLoader):
 
     @property
     def info(self) -> DatasetInfo:
-        freq = "1D" if self.resolution == "daily" else "1h"
         feature_cols = ["qobs"] + _MET_COLUMNS
         units = {"qobs": "m3/s", **_MET_UNITS}
         return DatasetInfo(
-            name=f"lamah_ce_{self.resolution}",
+            name="lamah_ce_daily",
             url=_LAMAH_URL,
-            frequency=freq,
+            frequency="1D",
             node_order=self._node_order,
             feature_columns=feature_cols,
             units=units,
             window_config=WindowConfig(target_columns=["qobs"]),
             description=(
                 f"LamaH-CE Central Europe streamflow network (dynamic only), "
-                f"{self.resolution} resolution, up to 859 gauges, "
+                f"daily resolution, up to 859 gauges, "
                 f"{len(feature_cols)} features (qobs + {len(_MET_COLUMNS)} "
                 f"ERA5-Land met forcings)"
             ),
@@ -229,10 +216,7 @@ class LamaHCELoader(DatasetLoader):
     def _check_data_root(self) -> None:
         # Auto-download + extract on first use when no explicit path was given.
         if self.data_root is None:
-            self.data_root = ensure_lamah_data_root(
-                resolution=self.resolution,
-                cache_dir=self.cache_dir,
-            )
+            self.data_root = ensure_lamah_data_root(cache_dir=self.cache_dir)
             return
         if not self.data_root.exists():
             raise FileNotFoundError(
@@ -255,29 +239,17 @@ class LamaHCELoader(DatasetLoader):
         return df
 
     def _qobs_dir(self) -> Path:
-        return self.data_root / "D_gauges" / "2_timeseries" / self.resolution
+        return self.data_root / "D_gauges" / "2_timeseries" / "daily"
 
     def _met_dir(self) -> Path:
         return (
             self.data_root
             / "B_basins_intermediate_all"
             / "2_timeseries"
-            / self.resolution
+            / "daily"
         )
 
     def _parse_datetime(self, df: pd.DataFrame) -> pd.Series:
-        if "hh" in df.columns or "HH" in df.columns:
-            hh_col = "hh" if "hh" in df.columns else "HH"
-            return pd.to_datetime(
-                df["YYYY"].str.strip()
-                + "-"
-                + df["MM"].str.strip().str.zfill(2)
-                + "-"
-                + df["DD"].str.strip().str.zfill(2)
-                + " "
-                + df[hh_col].str.strip().str.zfill(2)
-                + ":00:00"
-            )
         return pd.to_datetime(
             df["YYYY"].str.strip()
             + "-"
@@ -355,7 +327,7 @@ class LamaHCELoader(DatasetLoader):
         if not frames:
             raise RuntimeError(
                 f"No time series files found under {self._qobs_dir()}. "
-                "Check that data_root and resolution are correct."
+                "Check that data_root is correct."
             )
 
         series = pd.concat(frames, ignore_index=True)
@@ -441,8 +413,3 @@ class LamaHCELoader(DatasetLoader):
               f"({bridged} bridged over filtered-out gauges, "
               f"{skipped_no_downstream} endpoints with no valid downstream).")
         return pd.DataFrame(rows, columns=["src", "dst", "cost"])
-
-
-class LamaHCEDynamicLoader(LamaHCELoader):
-    """Deprecated alias for :class:`LamaHCELoader`."""
-

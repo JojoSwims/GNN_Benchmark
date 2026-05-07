@@ -80,11 +80,13 @@ Common dataset keys include:
 - `pems-bay`
 - `pems04`
 - `pems08`
-- `beijing-air`
+- `beijing-air`, `beijing-air-cluster1`, `beijing-air-cluster2`
 - `elergone`
-- `nyiso`
+- `eu-load`
 - `nyc-covid`
-- `mel-peds`
+- `lamah-ce`
+- `noaa-buoy`
+- `divvy-bikeshare-static`
 
 > Tip: start with one dataset, then add more datasets after your first run completes.
 
