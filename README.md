@@ -53,18 +53,6 @@ environment yourself, `pip install -r requirements.txt` is equivalent.
 - `pyarrow` — parquet reader (NOAA, Divvy)
 - `tables` (PyTables) — HDF5 reader (METR-LA, PEMS-BAY)
 
-### Smoke tests
-
-After installing, you can confirm everything runs end-to-end with the
-two bundled smoke tests:
-
-```bash
-python test_lastvalue_all_datasets.py     # LastValue on every dataset
-python test_all_models_beijing_air.py     # every model, 1 epoch, on Beijing Air
-```
-
----
-
 ## Quick start: run a baseline in a few lines
 
 ```python
