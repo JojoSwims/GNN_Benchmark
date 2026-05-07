@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import io
+import urllib.error
+import urllib.request
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -11,38 +15,254 @@ import pandas as pd
 from gnn_benchmark.core.types import DatasetInfo, WindowConfig
 from gnn_benchmark.datasets.base import DatasetLoader
 
-try:
-    import gdown
+# ── Source: Divvy public S3 bucket of monthly trip CSVs ────────────────
+# Each file is at https://divvy-tripdata.s3.amazonaws.com/{YYYYMM}-divvy-tripdata.zip.
+# The loader downloads any missing monthly zips to a local cache, then
+# combines them into a single parquet and applies cross-era station-ID
+# reconciliation. Nothing is hosted by us — Divvy publishes the files.
+_DIVVY_S3_BASE = "https://divvy-tripdata.s3.amazonaws.com"
 
-    GDOWN_AVAILABLE = True
-except ImportError:
-    GDOWN_AVAILABLE = False
+# Default month range. Matches the registry entry; user can override
+# via ``start_month`` / ``end_month`` kwargs on the loader.
+_DEFAULT_START_MONTH = "2024-03"
+_DEFAULT_END_MONTH = "2026-03"
 
-# Google Drive ID for the combined parquet covering 2024-03..2026-03.
-# Produced by scripts/combine_divvy_tripdata.py and uploaded once.
-GDRIVE_ID = "1r2rfVNDgjcJiJO3lGOCK81AF7cDjHAKZ"
-
-# Cache directory for the downloaded parquet. First run downloads to
-# ``_CACHE_PATH``; subsequent runs reuse the cached file. Users can still
-# point ``data_path`` at a local file to bypass the download entirely.
+# Cache layout under ``~/.cache/gnn_benchmark/divvy_bikeshare/``:
+#   zips/{YYYYMM}-divvy-tripdata.zip  (one file per month)
+#   divvy_combined_{start}_{end}.parquet  (built lazily)
 _CACHE_DIR = Path.home() / ".cache" / "gnn_benchmark" / "divvy_bikeshare"
-_CACHE_PATH = _CACHE_DIR / "divvy_tripdata_combined.parquet"
+_ZIP_CACHE_DIR = _CACHE_DIR / "zips"
 
-# Repo-local path produced by scripts/combine_divvy_tripdata.py
-# (optionally with cross-era station-ID reconciliation already applied
-# upstream). If a developer has already built the parquet locally,
-# prefer that over re-downloading from Google Drive.
+# Repo-local path: if a developer already built the combined parquet
+# (e.g. via scripts/combine_divvy_tripdata.py), prefer that over the
+# auto-download path so no re-download or re-combine is needed.
 _REPO_LOCAL_PATH = (
     Path(__file__).resolve().parent.parent
     / "datasets"
     / "divvy_tripdata_combined.parquet"
 )
 
+# Cross-era station-ID reconciliation. Divvy migrated its station-ID
+# scheme around mid-2025: pre-migration trips use short numeric / TA-
+# prefixed IDs; post-migration trips use ``CHI*`` IDs with no overlap.
+# We match same-physical-station pairs across the two eras by median
+# coordinates (mutual-nearest-neighbour, 30 m haversine cap) and rewrite
+# pre-migration IDs to their post-migration counterparts. Tag each
+# station as era A (first month before _ERA_BOUNDARY) or B otherwise.
+_ERA_BOUNDARY = pd.Period("2025-06", freq="M")
+_RECONCILE_THRESHOLD_M = 30.0
+
+_EARTH_R_M = 6371008.8
+
+# Canonical column schema for Divvy trip CSVs (stable since 2020-04).
+_CANONICAL_COLS = [
+    "ride_id",
+    "rideable_type",
+    "started_at",
+    "ended_at",
+    "start_station_name",
+    "start_station_id",
+    "end_station_name",
+    "end_station_id",
+    "start_lat",
+    "start_lng",
+    "end_lat",
+    "end_lng",
+    "member_casual",
+]
+_FLOAT_COLS_RAW = ["start_lat", "start_lng", "end_lat", "end_lng"]
+_DATE_COLS_RAW = ["started_at", "ended_at"]
+
 # Chicago / Divvy service-area bounding box (same as the combine-script
 # audit). Trips with start OR end coords outside are almost always bad
 # default pins (0.0, 0.0 or 1.0, 1.0) and would corrupt haversine.
 _LAT_MIN, _LAT_MAX = 41.5, 42.2
 _LNG_MIN, _LNG_MAX = -88.2, -87.4
+
+
+# ── S3 download / combine / reconcile helpers ──────────────────────────
+
+
+def _iter_yyyymm(start: str, end: str) -> list[str]:
+    """Inclusive list of ``YYYYMM`` strings between ``start`` and ``end``.
+
+    ``start`` / ``end`` accept any pandas-Period-parseable form (e.g.
+    ``"2024-03"``, ``"202403"``, ``pd.Period("2024-03", freq="M")``).
+    """
+    s = pd.Period(start, freq="M")
+    e = pd.Period(end, freq="M")
+    if e < s:
+        raise ValueError(f"end_month {end!r} precedes start_month {start!r}")
+    return [p.strftime("%Y%m") for p in pd.period_range(s, e, freq="M")]
+
+
+def _download_month_zip(yyyymm: str, dest_dir: Path) -> Path:
+    """Download the Divvy zip for ``YYYYMM`` if not cached. Returns path."""
+    target = dest_dir / f"{yyyymm}-divvy-tripdata.zip"
+    if target.exists() and target.stat().st_size > 0:
+        return target
+    url = f"{_DIVVY_S3_BASE}/{yyyymm}-divvy-tripdata.zip"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    print(f"  downloading {url}")
+    try:
+        urllib.request.urlretrieve(url, target)
+    except urllib.error.HTTPError as e:
+        # Clean up any partial file before re-raising
+        target.unlink(missing_ok=True)
+        raise FileNotFoundError(
+            f"Could not download {url} (HTTP {e.code}). "
+            "Check that this month is published at "
+            f"{_DIVVY_S3_BASE}/index.html."
+        ) from e
+    return target
+
+
+def _read_csv_from_zip(zip_path: Path) -> pd.DataFrame:
+    """Read the CSV inside a Divvy month zip; coerce to canonical schema."""
+    with zipfile.ZipFile(zip_path) as zf:
+        csv_names = [
+            n
+            for n in zf.namelist()
+            if n.lower().endswith(".csv") and not n.startswith("__MACOSX")
+        ]
+        if not csv_names:
+            raise ValueError(f"no CSV inside {zip_path}")
+        with zf.open(csv_names[0]) as f:
+            raw = f.read()
+
+    df = pd.read_csv(io.BytesIO(raw), dtype=str)
+    # Stable schema even if a month is missing a column (rare).
+    for c in _CANONICAL_COLS:
+        if c not in df.columns:
+            df[c] = pd.NA
+    df = df[_CANONICAL_COLS].copy()
+    for col in _FLOAT_COLS_RAW:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    for col in _DATE_COLS_RAW:
+        df[col] = pd.to_datetime(df[col], format="mixed", errors="coerce")
+    return df
+
+
+def _combine_months(zip_paths: list[Path]) -> pd.DataFrame:
+    """Concatenate per-month CSVs, deduping ride_ids across months.
+
+    Divvy occasionally republishes some May trips in the June file
+    (~hundreds of rows in 2024 data). Dropping cross-month duplicates
+    keeps each ride counted exactly once.
+    """
+    seen_rides: set[str] = set()
+    frames: list[pd.DataFrame] = []
+    for zp in zip_paths:
+        df = _read_csv_from_zip(zp)
+        rid = df["ride_id"].astype(str).fillna("")
+        keep = ~rid.isin(seen_rides) & rid.ne("")
+        seen_rides.update(rid[keep])
+        frames.append(df[keep])
+    return pd.concat(frames, ignore_index=True)
+
+
+def _reconcile_station_ids(raw: pd.DataFrame) -> pd.DataFrame:
+    """Crosswalk pre-migration → post-migration station IDs by coords.
+
+    Computes per-station median lat/lon and tags each as era A (first
+    month < _ERA_BOUNDARY) or era B. Mutual-nearest-neighbour matching
+    with a 30 m haversine cap; matched A-IDs are rewritten to their B
+    counterparts in both ``start_station_id`` and ``end_station_id``.
+    """
+    a = raw[["start_station_id", "start_lat", "start_lng", "ended_at"]].rename(
+        columns={"start_station_id": "node_id", "start_lat": "lat", "start_lng": "lon"}
+    )
+    b = raw[["end_station_id", "end_lat", "end_lng", "ended_at"]].rename(
+        columns={"end_station_id": "node_id", "end_lat": "lat", "end_lng": "lon"}
+    )
+    pts = pd.concat([a, b], ignore_index=True).dropna(subset=["node_id"])
+    pts["month"] = pts["ended_at"].dt.to_period("M")
+    stations = pts.groupby("node_id", as_index=False).agg(
+        lat=("lat", "median"), lon=("lon", "median"),
+        first_month=("month", "min"),
+    )
+    stations["era"] = np.where(stations["first_month"] < _ERA_BOUNDARY, "A", "B")
+    era_a = stations[stations["era"] == "A"].reset_index(drop=True)
+    era_b = stations[stations["era"] == "B"].reset_index(drop=True)
+    if era_a.empty or era_b.empty:
+        return raw  # only one era present, nothing to reconcile
+
+    # Pairwise haversine (vectorized).
+    la1 = np.radians(era_a["lat"].to_numpy())
+    lo1 = np.radians(era_a["lon"].to_numpy())
+    la2 = np.radians(era_b["lat"].to_numpy())
+    lo2 = np.radians(era_b["lon"].to_numpy())
+    dphi = la1[:, None] - la2[None, :]
+    dlam = lo1[:, None] - lo2[None, :]
+    a_h = (
+        np.sin(dphi / 2) ** 2
+        + np.cos(la1)[:, None] * np.cos(la2)[None, :] * np.sin(dlam / 2) ** 2
+    )
+    a_h = np.clip(a_h, 0.0, 1.0)
+    dist = _EARTH_R_M * 2 * np.arcsin(np.sqrt(a_h))
+
+    nb_for_a = dist.argmin(axis=1)
+    na_for_b = dist.argmin(axis=0)
+
+    crosswalk: dict[str, str] = {}
+    for i_a in range(len(era_a)):
+        i_b = int(nb_for_a[i_a])
+        if na_for_b[i_b] != i_a:
+            continue  # not mutual nearest
+        if dist[i_a, i_b] > _RECONCILE_THRESHOLD_M:
+            continue  # too far apart
+        crosswalk[era_a.iloc[i_a]["node_id"]] = era_b.iloc[i_b]["node_id"]
+
+    if not crosswalk:
+        return raw
+    print(
+        f"  reconciled {len(crosswalk)} cross-era station IDs "
+        f"(threshold {_RECONCILE_THRESHOLD_M:.0f} m)"
+    )
+    raw["start_station_id"] = (
+        raw["start_station_id"].map(crosswalk).fillna(raw["start_station_id"])
+    )
+    raw["end_station_id"] = (
+        raw["end_station_id"].map(crosswalk).fillna(raw["end_station_id"])
+    )
+    return raw
+
+
+def _ensure_combined_parquet(
+    start_month: str, end_month: str, force_rebuild: bool = False
+) -> Path:
+    """Ensure a combined+reconciled Divvy parquet exists locally.
+
+    Returns the path to the parquet. On first call:
+      1. Downloads any missing monthly zips into ``_ZIP_CACHE_DIR``.
+      2. Combines all per-month CSVs (with cross-month ride_id dedup).
+      3. Reconciles cross-era station IDs.
+      4. Writes the result to ``_CACHE_DIR``.
+
+    Subsequent calls return the cached parquet unless ``force_rebuild``.
+    """
+    cache_path = _CACHE_DIR / f"divvy_combined_{start_month}_{end_month}.parquet"
+    if cache_path.exists() and not force_rebuild:
+        return cache_path
+
+    months = _iter_yyyymm(start_month, end_month)
+    print(
+        f"[Divvy] preparing combined parquet for "
+        f"{months[0]}..{months[-1]} ({len(months)} months)"
+    )
+    zip_paths = [_download_month_zip(m, _ZIP_CACHE_DIR) for m in months]
+
+    print(f"[Divvy] combining {len(zip_paths)} months and deduping ride_ids...")
+    raw = _combine_months(zip_paths)
+    print(f"  {len(raw):,} rows after dedup")
+
+    print("[Divvy] reconciling cross-era station IDs...")
+    raw = _reconcile_station_ids(raw)
+
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"[Divvy] writing combined parquet to {cache_path}")
+    raw.to_parquet(cache_path, compression="zstd", index=False)
+    return cache_path
 
 # Trip-duration ceiling (seconds). Anything longer is typically a lost
 # bike or a data-quality error, not a legitimate ride.
@@ -96,9 +316,18 @@ class DivvyBikeshareLoader(DatasetLoader):
 
     Args:
         data_path: Path to the source file. Accepts ``.parquet`` or
-            ``.csv``. If ``None`` (default), the combined parquet is
-            downloaded from Google Drive on first use and cached at
-            ``~/.cache/gnn_benchmark/divvy_bikeshare/``.
+            ``.csv``. If ``None`` (default), monthly Divvy zips
+            (``{YYYYMM}-divvy-tripdata.zip``) are downloaded directly
+            from the public S3 bucket
+            ``https://divvy-tripdata.s3.amazonaws.com``, combined into
+            a single parquet, cross-era station IDs reconciled, and
+            cached at ``~/.cache/gnn_benchmark/divvy_bikeshare/``.
+        start_month: Inclusive first month to download, ``"YYYY-MM"`` /
+            ``"YYYYMM"``. Default ``"2024-03"``. Only used when
+            ``data_path`` is None.
+        end_month: Inclusive last month to download, ``"YYYY-MM"`` /
+            ``"YYYYMM"``. Default ``"2026-03"``. Only used when
+            ``data_path`` is None.
         resolution: Pandas offset alias for the aggregation window. One
             of ``"1h"``, ``"6h"``, ``"1D"``. Applies to both node series
             and dynamic-edge snapshots.
@@ -141,6 +370,8 @@ class DivvyBikeshareLoader(DatasetLoader):
     data_path: Path | None = None
     resolution: str = "1h"
     edges_mode: str = "both"
+    start_month: str = _DEFAULT_START_MONTH
+    end_month: str = _DEFAULT_END_MONTH
     bbox: tuple[float, float, float, float] | None = None
     top_k_stations: int | None = None
     static_edge_cutoff_m: float | None = None
@@ -185,8 +416,18 @@ class DivvyBikeshareLoader(DatasetLoader):
                 )
         if self.data_path is not None:
             self.data_path = Path(self.data_path)
-        # else: resolved lazily in _resolve_data_path() — downloaded from
-        # Google Drive on first use, cached for subsequent runs.
+        # else: resolved lazily in _resolve_data_path() — monthly zips
+        # are downloaded from Divvy's public S3 bucket on first use,
+        # combined + reconciled, and cached.
+
+        # Normalize month strings (accept both "2024-03" and "202403").
+        self.start_month = pd.Period(self.start_month, freq="M").strftime("%Y-%m")
+        self.end_month = pd.Period(self.end_month, freq="M").strftime("%Y-%m")
+        if pd.Period(self.start_month, freq="M") > pd.Period(self.end_month, freq="M"):
+            raise ValueError(
+                f"start_month {self.start_month!r} is after end_month "
+                f"{self.end_month!r}"
+            )
 
     # ── DatasetLoader interface ──────────────────────────────────────────
 
@@ -201,7 +442,10 @@ class DivvyBikeshareLoader(DatasetLoader):
         # Include the source-file stem + any geographic/top-K
         # restrictions in the cache key so switching these rebuilds
         # instead of silently reusing a previous run's IR.
-        src_tag = self.data_path.stem if self.data_path is not None else "combined"
+        if self.data_path is not None:
+            src_tag = self.data_path.stem
+        else:
+            src_tag = f"S3_{self.start_month}_{self.end_month}"
         subset_tag = ""
         if self.bbox is not None:
             la0, la1, lo0, lo1 = self.bbox
@@ -214,10 +458,15 @@ class DivvyBikeshareLoader(DatasetLoader):
             subset_tag += "_kM" + ",".join(str(m) for m in self.keep_months)
         if self.min_active_fraction is not None:
             subset_tag += f"_act{int(self.min_active_fraction * 100)}"
-        source_name = self.data_path.name if self.data_path is not None else "GDrive:divvy_tripdata_combined.parquet"
+        if self.data_path is not None:
+            source_name = self.data_path.name
+        else:
+            source_name = (
+                f"S3:{self.start_month}..{self.end_month} (combined+reconciled)"
+            )
         return DatasetInfo(
             name=f"divvy_bikeshare_{src_tag}{subset_tag}_{self.resolution}_{mode_tag}",
-            url=f"https://drive.google.com/uc?id={GDRIVE_ID}",
+            url=f"{_DIVVY_S3_BASE}/index.html",
             frequency=self.resolution,
             node_order=list(self._node_order),
             feature_columns=["activity", "departures", "arrivals"],
@@ -266,34 +515,21 @@ class DivvyBikeshareLoader(DatasetLoader):
           1. Repo-local combined parquet (output of
              ``scripts/combine_divvy_tripdata.py``, optionally with
              cross-era station-ID reconciliation already applied).
-          2. Previously-downloaded cache file.
-          3. Download from Google Drive to the cache.
+          2. Cached combined+reconciled parquet built lazily by
+             ``_ensure_combined_parquet`` from monthly Divvy zips
+             downloaded directly from S3.
         """
         if self.data_path is not None:
             if not self.data_path.exists():
                 raise FileNotFoundError(
                     f"Divvy source file not found at {self.data_path}. "
-                    "Pass data_path=None to auto-download from Google Drive."
+                    "Pass data_path=None to auto-build from the public S3 zips."
                 )
             return self.data_path
 
         if _REPO_LOCAL_PATH.exists():
             return _REPO_LOCAL_PATH
-        if _CACHE_PATH.exists():
-            return _CACHE_PATH
-
-        if not GDOWN_AVAILABLE:
-            raise ImportError(
-                "gdown is required to download the Divvy combined parquet. "
-                "Install with: pip install gdown"
-            )
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        print(
-            f"Downloading Divvy combined parquet from Google Drive "
-            f"→ {_CACHE_PATH} …"
-        )
-        gdown.download(id=GDRIVE_ID, output=str(_CACHE_PATH), quiet=False)
-        return _CACHE_PATH
+        return _ensure_combined_parquet(self.start_month, self.end_month)
 
     def _read_source(self) -> pd.DataFrame:
         """Read the source parquet or CSV into a DataFrame with canonical dtypes."""
