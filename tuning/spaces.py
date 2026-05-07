@@ -45,7 +45,6 @@ from gnn_benchmark.tuning.search_space import (
 __all__ = [
     "DEFAULT_LR_LOW",
     "DEFAULT_LR_HIGH",
-    "dyngwn_search_space",
     "gwn_search_space",
     "mlp_multivariate_search_space",
     "mtgnn_search_space",
@@ -87,36 +86,6 @@ def mlp_multivariate_search_space(
             "dropout":     Categorical([0.0, 0.1, 0.2, 0.3]),
             "hidden_size": Categorical([256, 512, 1024]),
             "num_layers":  Categorical([1, 2, 3]),
-        },
-        overrides,
-    )
-
-
-def dyngwn_search_space(
-    lr_low: float = DEFAULT_LR_LOW,
-    lr_high: float = DEFAULT_LR_HIGH,
-    **overrides: Sampler,
-) -> dict[str, Sampler]:
-    """Dyn-GWN: lr + dropout + nhid + addaptadj + flow_transform.
-
-    Adds ``flow_transform`` to GWN's space: the most impactful knob on
-    the dynamic-graph branch, since it governs how raw flow magnitudes
-    (trip counts for divvy, MW for eu_load) are mapped to softmax-
-    friendly support weights. ``log1p_abs_rownorm`` is the well-behaved
-    default; ``log1p_abs`` skips the row-mean normalisation; ``abs``
-    keeps the raw scale. ``identity`` matches the upstream demo path
-    and tends to saturate the inner softmax — included so search can
-    rule it out rather than hard-coding it off.
-    """
-    return _build(
-        {
-            "lr":             LogUniform(lr_low, lr_high),
-            "dropout":        Categorical([0.0, 0.1, 0.3, 0.5]),
-            "nhid":           Categorical([16, 32]),
-            "addaptadj":      Categorical([True, False]),
-            "flow_transform": Categorical(
-                ["log1p_abs_rownorm", "log1p_abs", "abs"]
-            ),
         },
         overrides,
     )

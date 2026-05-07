@@ -30,17 +30,38 @@ Use it when you want comparable results across GNN (or non-GNN) time-series fore
 git clone https://github.com/JojoSwims/GNN_Benchmark.git
 cd GNN_Benchmark
 
-pip install -r requirements.txt
-pip install torch
-pip install gdown  # optional, needed for some traffic datasets
+# Either: install into the current environment
+./install.sh
+
+# Or: create ./venv and install into it
+./install.sh --venv
 ```
+
+`install.sh` upgrades `pip`, installs everything in `requirements.txt`,
+then verifies that each required package imports cleanly. It exits
+non-zero on any failure so it works in CI. If you prefer to manage your
+environment yourself, `pip install -r requirements.txt` is equivalent.
 
 ### Requirements
 
 - Python 3.10+
-- `numpy`, `pandas`
-- `torch` (required by runner)
-- `gdown` (optional for select dataset downloads)
+- `numpy`, `pandas`, `scipy` — core data and numerics
+- `torch` — required by every model wrapper and the runner
+- `torchdiffeq` — ODE solver used by the MTGODE model
+- `gdown` — Google Drive downloads (METR-LA, PEMS-BAY, EU-Load, LamaH-CE,
+  NOAA, Divvy)
+- `pyarrow` — parquet reader (NOAA, Divvy)
+- `tables` (PyTables) — HDF5 reader (METR-LA, PEMS-BAY)
+
+### Smoke tests
+
+After installing, you can confirm everything runs end-to-end with the
+two bundled smoke tests:
+
+```bash
+python test_lastvalue_all_datasets.py     # LastValue on every dataset
+python test_all_models_beijing_air.py     # every model, 1 epoch, on Beijing Air
+```
 
 ---
 
@@ -80,11 +101,13 @@ Common dataset keys include:
 - `pems-bay`
 - `pems04`
 - `pems08`
-- `beijing-air`
+- `beijing-air`, `beijing-air-cluster1`, `beijing-air-cluster2`
 - `elergone`
-- `nyiso`
+- `eu-load`
 - `nyc-covid`
-- `mel-peds`
+- `lamah-ce`
+- `noaa-buoy`
+- `divvy-bikeshare-static`
 
 > Tip: start with one dataset, then add more datasets after your first run completes.
 
@@ -96,18 +119,19 @@ The repository includes wrappers/examples for multiple published models and base
 
 ## Bring your own model: implement one wrapper
 
-To benchmark your model, implement the benchmark model contract by subclassing `BenchmarkModel`.
+To benchmark your model, implement the benchmark model contract by subclassing
+`BenchmarkModel` and pass the instance to `BenchmarkRunner.run`. Your wrapper
+must define `name`, `fit`, and `predict`.
 
-Your wrapper must define:
-
-- `name` (string for reporting)
-- `fit(...)`
-- `predict(...)`
-
-Minimal structure:
+### Step 1: implement the wrapper
 
 ```python
-from gnn_benchmark.models import BenchmarkModel
+import numpy as np
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+
+from gnn_benchmark.models import BenchmarkModel, TrainingHistory
+
 
 class MyModel(BenchmarkModel):
     @property
@@ -115,47 +139,166 @@ class MyModel(BenchmarkModel):
         return "MyModel"
 
     def fit(self, x_train, y_train, x_val, y_val, adj, config):
-        # Train your model here
-        return None
+        # Tensors arrive unbatched. Build whatever DataLoader you want.
+        # NaN = missing -- mask in your loss instead of zero-filling.
+        loader = DataLoader(
+            TensorDataset(x_train, y_train),
+            batch_size=getattr(config, "batch_size", 64),
+            shuffle=True,
+        )
+        net = build_my_network(x_train.shape, adj)        # your code
+        opt = torch.optim.Adam(net.parameters(), lr=config.lr)
 
-    def predict(self, x_test, adj, config):
-        # Return predictions in original units
-        ...
+        train_loss, val_loss = [], []
+        for _ in range(config.max_epochs):
+            ...                                             # train one epoch
+            train_loss.append(epoch_train_loss)
+            val_loss.append(epoch_val_loss)
+
+        self._net = net
+        return TrainingHistory(train_loss=train_loss, val_loss=val_loss)
+
+    def predict(self, x_test, adj, config) -> np.ndarray:
+        self._net.eval()
+        with torch.no_grad():
+            y_pred = self._net(x_test, adj)               # your code
+        # Must be returned in *original (unnormalised)* units, shape
+        # [S, H, N, D_out], dtype float32 / float64.
+        return y_pred.cpu().numpy()
 ```
 
-### Important interface expectations
+### Step 2: run it
 
-- `x_*` tensors are shaped `[S, L, N, D_in]`
-- `y_*` tensors are shaped `[S, H, N, D_out]`
-- missing values are represented as `NaN`
-- `adj` can be `None` when no graph is provided
-- predictions must be returned in **original (unnormalized) units**
-- batching/data loaders are handled inside your wrapper (the harness does not impose one)
+```python
+from gnn_benchmark import BenchmarkRunner
 
-If your wrapper satisfies this contract, your model can run in the same pipeline as other models.
+runner = BenchmarkRunner(
+    workspace_dir="./benchmark_workspace",
+    datasets=["metr-la", "pems-bay", "beijing-air"],
+)
+result = runner.run(MyModel(), config=MyModelConfig(lr=1e-3, max_epochs=50))
+print(result.summary())
+```
+
+### Step 3 (optional): hyperparameter tune it
+
+If your config is a dataclass, the bundled tuner will random-search over any
+fields you list:
+
+```python
+from gnn_benchmark.tuning import HyperparameterTuner, LogUniform, Categorical
+
+tuner = HyperparameterTuner(
+    model_factory=lambda: MyModel(),
+    base_config=MyModelConfig(max_epochs=50, batch_size=64),
+    dataset_key="metr-la",
+    workspace_dir="./benchmark_workspace",
+    search_space={
+        "lr":      LogUniform(1e-4, 5e-3),
+        "dropout": Categorical([0.0, 0.1, 0.3]),
+    },
+    strategy="random", n_trials=18, seed=0,
+)
+print(tuner.run().summary())
+```
+
+### Tensor contract
+
+- `x_*` tensors: shape `[S, L, N, D_in]` `float32` `torch.Tensor` (NaN = missing)
+- `y_*` tensors: shape `[S, H, N, D_out]` `float32` `torch.Tensor` (NaN = missing)
+- `adj`: `np.ndarray` of shape `[N, N]`, or `None` when the dataset has no graph
+- predictions: `np.ndarray` of shape `[S, H, N, D_out]` in **original units**
+- batching: your wrapper builds its own `DataLoader`; the harness does not impose one
+- normalisation: your wrapper handles it; the harness passes raw values
 
 ---
 
-## Bring your own dataset: transform it to benchmark IR
+## Bring your own dataset: implement one loader
 
-You can benchmark custom data as long as you map it into the benchmark’s intermediate representation (IR) expected by the pipeline.
+A custom dataset is one subclass of `DatasetLoader`. The loader handles
+download/parsing once; the harness handles windowing, splitting, tensorisation,
+and metrics.
 
-At a high level, your transform should produce:
+### Step 1: implement the loader
 
-- a multivariate time-series signal aligned in time,
-- node dimension `N` (or equivalent entities),
-- input/output feature dimensions,
-- optional adjacency matrix `adj` (`[N, N]`) or `None`.
+`download_and_convert` returns two DataFrames in the benchmark's intermediate
+representation (IR):
 
-Then the benchmark can apply the standard windowing, split, tensor conversion, and evaluation flow.
+- `series_df` — long-format time series with columns `[ts, node_id, <feature_1>, <feature_2>, ...]`. `ts` is a `pd.Timestamp` on a regular grid; missing values are `NaN`.
+- `edges_df` — `[src, dst, cost]` rows for the static adjacency, or `None` if the dataset has no graph.
+
+```python
+from dataclasses import dataclass
+import pandas as pd
+
+from gnn_benchmark.core.types import DatasetInfo, WindowConfig
+from gnn_benchmark.datasets.base import DatasetLoader
+
+
+@dataclass
+class MyLoader(DatasetLoader):
+    data_path: str = "./my_data.csv"
+
+    @property
+    def info(self) -> DatasetInfo:
+        return DatasetInfo(
+            name="my-dataset",
+            url="https://example.org/my-dataset",
+            frequency="1h",                              # pandas freq string
+            node_order=[],                               # filled in download_and_convert
+            feature_columns=["load"],
+            units={"load": "MW"},
+            window_config=WindowConfig(
+                input_length=12, horizon=12,
+                target_columns=["load"],
+            ),
+        )
+
+    def download_and_convert(self) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+        raw = pd.read_csv(self.data_path, parse_dates=["ts"])
+        # Long format: one row per (timestamp, node_id, feature_value).
+        series_df = raw[["ts", "node_id", "load"]].copy()
+        series_df["node_id"] = series_df["node_id"].astype(str)
+
+        # Optional static graph. Use None when no graph exists.
+        edges_df = pd.DataFrame(
+            [("A", "B", 1.0), ("B", "C", 1.0)],
+            columns=["src", "dst", "cost"],
+        )
+        return series_df, edges_df
+```
+
+### Step 2: register and run
+
+`DATASET_REGISTRY` is a plain dict, so a custom loader is one assignment away
+from being usable through `BenchmarkRunner`:
+
+```python
+from gnn_benchmark import BenchmarkRunner
+from gnn_benchmark.benchmark import DATASET_REGISTRY
+from gnn_benchmark.models import LastValueModel
+
+DATASET_REGISTRY["my-dataset"] = lambda: MyLoader(data_path="./my_data.csv")
+
+runner = BenchmarkRunner(datasets=["my-dataset"])
+print(runner.run(LastValueModel()).summary())
+```
+
+You can also skip the registry and just use the loader directly through
+`DataWorkspace.prepare`, which is what the runner does internally:
+
+```python
+from gnn_benchmark import DataWorkspace
+ir = MyLoader(data_path="./my_data.csv").prepare(DataWorkspace("./benchmark_workspace"))
+```
 
 ### Practical checklist for custom datasets
 
-- define clear timestamp alignment and frequency,
-- represent missing data with `NaN` (not zero-filling by default),
-- keep raw units available for final metric computation,
-- provide graph structure only if your domain has one,
-- verify shape consistency before running long training jobs.
+- define a clear timestamp grid and `frequency`,
+- represent missing data with `NaN` (not zero-filling),
+- return raw units; the harness computes metrics in those units,
+- provide an adjacency only when your domain has one — otherwise `edges_df=None`,
+- verify shape and `node_order` consistency before running long training jobs.
 
 ---
 
@@ -175,6 +318,43 @@ Because this sequence is shared across models, metrics are produced under the sa
 
 ---
 
+## Reproducing the paper experiments
+
+Every number reported in the paper comes from one of three example
+directories. Each script is self-contained and writes to
+`./benchmark_workspace/`, which is gitignored.
+
+| To reproduce | Run |
+|---|---|
+| **Baselines** (LastValue and MLPMultivariate, no tuning) | `python examples_baseline/<dataset>_<lastvar\|mlp>_example.py` |
+| **Main results** (every model × dataset, fair-protocol random search) | `python examples_new/<dataset>_<model>_example.py` |
+| **Ablations** (no-graph and no-adaptive variants on the winning configs) | `python ablation_examples/<dataset>_<model>_ablation.py` |
+
+For example, to reproduce GWN on EU-Load:
+
+```bash
+python examples_new/eu_load_gwn_example.py
+```
+
+The fair-tuning protocol used by every script in `examples_new/` is documented
+in `examples_new/_shared.py`: identical `n_trials=18` random search,
+`seed=0`, dataset-specific training schedule (batch size, max epochs,
+LR milestones), and per-model search-space factory from
+`gnn_benchmark.tuning.spaces`. Each script prints the per-trial summary,
+the total tuning compute, and the final test-set evaluation with the
+winning config.
+
+To reproduce the entire paper end-to-end:
+
+```bash
+for f in examples_baseline/*.py examples_new/*.py ablation_examples/*.py; do
+    python "$f"
+done
+```
+
+(Reasonable runtimes assume a single GPU; LamaH-CE and NYC COVID are the
+slowest; STAEFormer on NYC COVID is the most memory-intensive.)
+
 ## Recommended workflow for new users
 
 1. Run `LastValueModel` on one built-in dataset to validate environment.
@@ -190,8 +370,9 @@ This order helps isolate setup issues (environment → data → model).
 ## Repository pointers
 
 - `README.md` — high-level usage and onboarding (this file)
-- `examples_old/` — simple starter usage
+- `examples_baseline/` — simple starter usage
 - `examples_new/` — model × dataset tuning/comparison examples
+- `ablation_examples/` — graph/adaptive-edge ablation runs
 
 ---
 

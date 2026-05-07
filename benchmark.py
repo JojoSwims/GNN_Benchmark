@@ -133,19 +133,19 @@ DATASET_REGISTRY: dict[str, Any] = {
         min_active_fraction=0.30,
     ),
     # Same Divvy subset as ``divvy-bikeshare-static`` but with hourly
-    # directed trip-count snapshots instead of the haversine
-    # adjacency; consumed by Dyn-GWN. ``edges_mode="dynamic"`` skips
-    # the static graph entirely so the model contract's ``adj`` is None
-    # and the dynamic tensor is the only graph signal.
+    # directed trip-count snapshots instead of the haversine adjacency.
+    # ``edges_mode="dynamic"`` skips the static graph entirely so the
+    # model contract's ``adj`` is None and the dynamic tensor is the
+    # only graph signal.
     "divvy-bikeshare-dynamic": lambda: DivvyBikeshareLoader(
         edges_mode="dynamic",
         bbox=(41.87, 41.945, -87.67, -87.605),
         keep_months=(3, 4, 5, 6, 7, 8, 9, 10, 11),
         min_active_fraction=0.30,
     ),
-    # Both static haversine adjacency and hourly dynamic snapshots. Dyn-GWN
-    # uses the static one as its ``supports`` and the dynamic tensor for
-    # the time-varying branch.
+    # Both static haversine adjacency and hourly dynamic snapshots,
+    # for models that consume both a static support and a time-varying
+    # branch.
     "divvy-bikeshare-both": lambda: DivvyBikeshareLoader(
         edges_mode="both",
         bbox=(41.87, 41.945, -87.67, -87.605),
