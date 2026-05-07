@@ -1,3 +1,8 @@
 pandas
 numpy
+scipy
+torch
+torchdiffeq
 gdown
+pyarrow
+tables

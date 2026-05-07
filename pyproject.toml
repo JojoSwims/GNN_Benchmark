@@ -5,7 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gnn-benchmark"
 version = "0.1.0"
-dependencies = ["pandas", "numpy", "gdown"]
+dependencies = [
+    "pandas",
+    "numpy",
+    "scipy",
+    "torch",
+    "torchdiffeq",
+    "gdown",
+    "pyarrow",
+    "tables",
+]
 
 [tool.setuptools]
 packages = [
@@ -13,6 +22,10 @@ packages = [
     "gnn_benchmark.core",
     "gnn_benchmark.datasets",
     "gnn_benchmark.models",
+    "gnn_benchmark.models.ASTGCN",
+    "gnn_benchmark.models.ASTGCN.model",
+    "gnn_benchmark.models.GWN",
+    "gnn_benchmark.models.MTGNN",
     "gnn_benchmark.models.MTGODE",
     "gnn_benchmark.models.STAEFormer",
     "gnn_benchmark.models.STAEFormer.model",

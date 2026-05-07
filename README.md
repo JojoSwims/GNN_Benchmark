@@ -31,16 +31,18 @@ git clone https://github.com/JojoSwims/GNN_Benchmark.git
 cd GNN_Benchmark
 
 pip install -r requirements.txt
-pip install torch
-pip install gdown  # optional, needed for some traffic datasets
 ```
 
 ### Requirements
 
 - Python 3.10+
-- `numpy`, `pandas`
-- `torch` (required by runner)
-- `gdown` (optional for select dataset downloads)
+- `numpy`, `pandas`, `scipy` — core data and numerics
+- `torch` — required by every model wrapper and the runner
+- `torchdiffeq` — ODE solver used by the MTGODE model
+- `gdown` — Google Drive downloads (METR-LA, PEMS-BAY, EU-Load, LamaH-CE,
+  NOAA, Divvy)
+- `pyarrow` — parquet reader (NOAA, Divvy)
+- `tables` (PyTables) — HDF5 reader (METR-LA, PEMS-BAY)
 
 ---
 
