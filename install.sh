@@ -44,6 +44,10 @@ fi
 echo "[install] Using $(python -V) at $(command -v python)"
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+# Editable install of the gnn_benchmark package itself, so ``import
+# gnn_benchmark`` resolves from anywhere on the system. ``pyproject.toml``
+# maps the package name to the repo root.
+python -m pip install -e .
 
 echo "[install] Verifying imports ..."
 python - <<'PY'
