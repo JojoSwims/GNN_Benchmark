@@ -1,6 +1,6 @@
-# GNN Benchmark
+# STG Benchmark
 
-GNN Benchmark is an **end-to-end benchmark suite** for spatiotemporal forecasting models. It standardizes datasets, preprocessing, train/val/test splits, and metrics so model comparisons are fair and reproducible.
+STG Benchmark is an **end-to-end benchmark suite** for spatiotemporal forecasting models. It standardizes datasets, preprocessing, train/val/test splits, and metrics so model comparisons are fair and reproducible.
 
 If you want to evaluate your own model in this repository, the benchmark supports these standard workflows:
 
@@ -27,9 +27,6 @@ Use it when you want comparable results across GNN (or non-GNN) time-series fore
 ## Installation
 
 ```bash
-git clone https://github.com/JojoSwims/GNN_Benchmark.git
-cd GNN_Benchmark
-
 # Either: install into the current environment
 ./install.sh
 
