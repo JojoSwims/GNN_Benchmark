@@ -215,18 +215,22 @@ class _BaseAirQualityLoader(DatasetLoader):
         stations = stations[stations["station_id"].isin(node_ids)]
         stations = stations[["station_id", "latitude", "longitude"]].reset_index(drop=True)
 
+        # Use itertuples (not iterrows): a row Series promotes int station_id
+        # to float to share a dtype with the lat/lon columns, so str(...) would
+        # yield "1001.0" and silently miss every node_id lookup downstream,
+        # producing an all-zero adjacency.
         rows = []
-        for i, row_i in stations.iterrows():
-            for j, row_j in stations.iterrows():
-                if row_i["station_id"] == row_j["station_id"]:
+        for row_i in stations.itertuples(index=False):
+            for row_j in stations.itertuples(index=False):
+                if row_i.station_id == row_j.station_id:
                     continue
                 d = haversine_distance(
-                    row_i["latitude"],
-                    row_i["longitude"],
-                    row_j["latitude"],
-                    row_j["longitude"],
+                    row_i.latitude,
+                    row_i.longitude,
+                    row_j.latitude,
+                    row_j.longitude,
                 )
-                rows.append((str(row_i["station_id"]), str(row_j["station_id"]), d))
+                rows.append((str(row_i.station_id), str(row_j.station_id), d))
 
         edges = pd.DataFrame(rows, columns=["src", "dst", "cost"])
         return edges
