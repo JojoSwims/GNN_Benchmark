@@ -11,7 +11,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from scipy.sparse.linalg import eigs
 
 
 # ---------------------------------------------------------------------------
@@ -21,9 +20,16 @@ from scipy.sparse.linalg import eigs
 def scaled_laplacian(W: np.ndarray) -> np.ndarray:
     """Compute the scaled Laplacian ``2L/lambda_max - I`` for adjacency W."""
     assert W.shape[0] == W.shape[1]
-    D = np.diag(np.sum(W, axis=1))
-    L = D - W
-    lambda_max = eigs(L, k=1, which="LR")[0].real
+    # Symmetrize defensively — floating-point asymmetry would make L non-Hermitian.
+    W_sym = np.maximum(W, W.T)
+    D = np.diag(np.sum(W_sym, axis=1))
+    L = D - W_sym
+    # L is real symmetric, so eigvalsh is exact and numerically robust.
+    # ARPACK's eigs(..., which="LR") fails with "Starting vector is zero" on
+    # small or ill-conditioned Laplacians (e.g. Beijing Air, N=36).
+    lambda_max = float(np.linalg.eigvalsh(L)[-1])
+    if lambda_max <= 0:
+        lambda_max = 2.0
     return (2 * L) / lambda_max - np.identity(W.shape[0])
 
 
