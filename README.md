@@ -27,9 +27,6 @@ Use it when you want comparable results across GNN (or non-GNN) time-series fore
 ## Installation
 
 ```bash
-git clone https://github.com/JojoSwims/GNN_Benchmark.git
-cd GNN_Benchmark
-
 # Either: install into the current environment
 ./install.sh
 
