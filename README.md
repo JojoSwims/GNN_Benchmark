@@ -1,6 +1,6 @@
 # STG Benchmark
 
-GNN Benchmark is an **end-to-end benchmark suite** for spatiotemporal forecasting models. It standardizes datasets, preprocessing, train/val/test splits, and metrics so model comparisons are fair and reproducible.
+STG Benchmark is an **end-to-end benchmark suite** for spatiotemporal forecasting models. It standardizes datasets, preprocessing, train/val/test splits, and metrics so model comparisons are fair and reproducible.
 
 If you want to evaluate your own model in this repository, the benchmark supports these standard workflows:
 
