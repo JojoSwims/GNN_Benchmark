@@ -1,4 +1,4 @@
-# GNN Benchmark
+# STG Benchmark
 
 GNN Benchmark is an **end-to-end benchmark suite** for spatiotemporal forecasting models. It standardizes datasets, preprocessing, train/val/test splits, and metrics so model comparisons are fair and reproducible.
 
